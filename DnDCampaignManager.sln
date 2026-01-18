@@ -1,0 +1,35 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36811.4
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Backend", "Backend", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Frontend", "Frontend", "{16636DA2-ACD8-4599-9B11-ACA9DD7DAAC9}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "DnDCampaignManager.api", "DnDCampaignManager.api", "{46B74BCA-D574-459E-86EE-70F87E639AE6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DnDCampaignManager.Api", "DnDCampaignManager.Api\DnDCampaignManager.Api.csproj", "{33914DB3-7B08-3A23-1FFD-D88780B2072A}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{33914DB3-7B08-3A23-1FFD-D88780B2072A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{33914DB3-7B08-3A23-1FFD-D88780B2072A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{33914DB3-7B08-3A23-1FFD-D88780B2072A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{33914DB3-7B08-3A23-1FFD-D88780B2072A}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{46B74BCA-D574-459E-86EE-70F87E639AE6} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{33914DB3-7B08-3A23-1FFD-D88780B2072A} = {46B74BCA-D574-459E-86EE-70F87E639AE6}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {AABFD67E-BCD7-4DB3-A4BE-400A0B99E3C4}
+	EndGlobalSection
+EndGlobal

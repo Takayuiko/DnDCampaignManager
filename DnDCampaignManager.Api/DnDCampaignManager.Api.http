@@ -1,0 +1,6 @@
+@DnDCampingManager.Api_HostAddress = http://localhost:5210
+
+GET {{DnDCampingManager.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
