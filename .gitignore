@@ -285,6 +285,8 @@ FakesAssemblies/
 .ntvs_analysis.dat
 node_modules/
 
+dist/
+
 # Visual Studio 6 build log
 *.plg
 
@@ -361,3 +363,36 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# =========================
+# Frontend (Vite / React)
+# =========================
+DnDCampaignManager.web/.vite/
+DnDCampaignManager.web/.eslintcache
+DnDCampaignManager.web/*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env files (frontend)
+DnDCampaignManager.web/.env
+DnDCampaignManager.web/.env.*
+!.env.example
+
+# =========================
+# Backend (ASP.NET / EF / SQLite)
+# =========================
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
+
+# User secrets / dev settings
+**/appsettings.Development.json
+**/appsettings.*.Development.json
+
+# EF/SQLite local artifacts
+
+*.sqlite
+*.sqlite3

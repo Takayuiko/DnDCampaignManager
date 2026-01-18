@@ -51,9 +51,18 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 // DbContext (SQLite)
-
 builder.Services.AddDbContext<DnDxDbContext>(options =>
     options.UseSqlite("Data Source=dndapp.db"));
+
+// Validate JWT secret
+var jwtKey = builder.Configuration["Jwt:Key"];
+
+if (string.IsNullOrWhiteSpace(jwtKey))
+{
+    throw new InvalidOperationException(
+        "JWT Key is missing. Configure Jwt:Key via User Secrets or environment variables."
+    );
+}
 
 // Service
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
@@ -73,7 +82,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)
+                Encoding.UTF8.GetBytes(jwtKey)
             )
         };
 
