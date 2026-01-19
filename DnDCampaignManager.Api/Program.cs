@@ -1,5 +1,6 @@
 using DnDCampingManager.Api.Data;
 using DnDCampingManager.Api.Models;
+using DnDCampingManager.Api.Options;
 using DnDCampingManager.Api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -55,13 +56,24 @@ builder.Services.AddDbContext<DnDxDbContext>(options =>
     options.UseSqlite("Data Source=dndapp.db"));
 
 // Validate JWT secret
-var jwtKey = builder.Configuration["Jwt:Key"];
+builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 
-if (string.IsNullOrWhiteSpace(jwtKey))
+var jwtOptions = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new JwtOptions();
+
+if (string.IsNullOrWhiteSpace(jwtOptions.Issuer) ||
+    string.IsNullOrWhiteSpace(jwtOptions.Audience))
 {
-    throw new InvalidOperationException(
-        "JWT Key is missing. Configure Jwt:Key via User Secrets or environment variables."
-    );
+    throw new InvalidOperationException("Jwt:Issuer and Jwt:Audience must be configured.");
+}
+
+if (jwtOptions.SigningKeys == null || jwtOptions.SigningKeys.Count == 0)
+{
+    throw new InvalidOperationException("Jwt:SigningKeys must contain at least one key.");
+}
+
+if (jwtOptions.SigningKeys.Any(k => string.IsNullOrWhiteSpace(k.Kid) || string.IsNullOrWhiteSpace(k.Key)))
+{
+    throw new InvalidOperationException("Each Jwt:SigningKeys entry must have Kid and Key.");
 }
 
 // Service
@@ -72,50 +84,35 @@ builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()!;
+
+        // build dictionary of keys by kid
+        var keysByKid = jwt.SigningKeys.ToDictionary(
+            k => k.Kid,
+            k => new SymmetricSecurityKey(Encoding.UTF8.GetBytes(k.Key)) { KeyId = k.Kid }
+        );
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
             ClockSkew = TimeSpan.Zero,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(jwtKey)
-            )
-        };
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = jwt.Issuer,
+            ValidAudience = jwt.Audience,
 
-        options.Events = new JwtBearerEvents
-        {
-            OnTokenValidated = async context =>
+            // Use kid from token header to pick correct signing key
+            IssuerSigningKeyResolver = (token, securityToken, kid, validationParameters) =>
             {
-                var userId = context.Principal?
-                    .FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (!string.IsNullOrWhiteSpace(kid) && keysByKid.TryGetValue(kid, out var key))
+                    return new[] { key };
 
-                var tokenVersion = context.Principal?
-                    .FindFirst("tv")?.Value;
-
-                if (userId == null || tokenVersion == null)
-                {
-                    context.Fail("Invalid token");
-                    return;
-                }
-
-                var db = context.HttpContext
-                    .RequestServices
-                    .GetRequiredService<DnDxDbContext>();
-
-                var user = await db.Users.FindAsync(int.Parse(userId));
-
-                if (user == null || user.TokenVersion.ToString() != tokenVersion)
-                {
-                    context.Fail("Token revoked");
-                }
+                // Fallback: try all keys (useful if kid missing)
+                return keysByKid.Values;
             }
         };
     });
-
 
 // Authorization
 builder.Services.AddAuthorization(options =>

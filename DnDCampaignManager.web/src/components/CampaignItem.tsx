@@ -1,5 +1,6 @@
 import { useAuth } from "../auth/AuthContext";
 import { useNavigate } from "react-router-dom";
+import Button from "./UI/Button";
 
 type Character = {
     id: number;
@@ -74,16 +75,14 @@ export default function CampaignItem({
                                         )}
                                     </div>
 
-                                    {(isDM || isMine) && (
-                                        <button
-                                            onClick={() =>
-                                                navigate(`/campaigns/${campaign.id}/characters/${c.id}/edit`)
-                                            }
-                                            className="text-sm text-emerald-700 hover:underline"
-                                        >
-                                            Edit
-                                        </button>
-                                    )}
+                                    <div className="flex flex-wrap gap-2 mt-3">
+                                        {(isDM || isMine) && (
+                                            <Button size="sm" variant="secondary"
+                                                onClick={() => navigate(`/campaigns/${campaign.id}/characters/${c.id}/edit`)}>
+                                                Edit
+                                            </Button>
+                                        )}
+                                    </div>
                                 </li>
                             );
                         })}
@@ -92,26 +91,26 @@ export default function CampaignItem({
             </div>
 
             {/* Actions */}
-            <div className="flex flex-wrap gap-2 pt-2 border-t border-stone-200">
+            <div className="flex flex-wrap gap-2 mt-3">
                 {isDM && (
                     <>
-                        <button
-                            onClick={() => onEdit(campaign.id)}
-                            className="px-3 py-1 rounded bg-stone-700 text-white text-sm hover:bg-stone-600"
-                        >
+                        <Button size="sm" variant="secondary"
+                            onClick={() => onEdit(campaign.id)}>
                             Edit Campaign
-                        </button>
+                        </Button>
 
-                        <button
+                        <Button
+                            size="sm"
+                            variant="danger"
                             onClick={() => {
                                 if (confirm("Delete this campaign?")) {
                                     onDelete(campaign.id);
                                 }
                             }}
-                            className="px-3 py-1 rounded bg-red-700 text-white text-sm hover:bg-red-600"
                         >
                             Delete
-                        </button>
+                        </Button>
+
                     </>
                 )}
 

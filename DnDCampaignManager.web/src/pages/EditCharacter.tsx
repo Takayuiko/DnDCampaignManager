@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getCharacter, updateCharacterByCampaign } from "../api/campaignApi";
+import { extractApiError } from "../Utils/apiError";
+import FormCard from "../components/UI/FormCard";
 
 type CharacterForm = {
     // Identity
@@ -102,6 +104,9 @@ export default function EditCharacter() {
     const [form, setForm] = useState<CharacterForm>(emptyForm);
     const [loading, setLoading] = useState(true);
 
+    const [submitting, setSubmitting] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
     // Handles <input> + <textarea>
     const handleChange = (
         e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
@@ -110,6 +115,7 @@ export default function EditCharacter() {
         const isNumber =
             e.target instanceof HTMLInputElement && e.target.type === "number";
 
+        setError(null);
         setForm(prev => ({
             ...prev,
             [name]: isNumber ? Number(value) : value
@@ -183,6 +189,9 @@ export default function EditCharacter() {
         e.preventDefault();
         if (!campaignId || !characterId) return;
 
+        setError(null);
+        setSubmitting(true);
+
         try {
             await updateCharacterByCampaign(
                 Number(campaignId),
@@ -191,34 +200,21 @@ export default function EditCharacter() {
             );
             navigate("/dashboard");
         } catch (err: any) {
-            alert(err?.response?.data ?? "Failed to save character");
+            setError(extractApiError(err, "Failed to save character."));
+        } finally {
+            setSubmitting(false);
         }
     };
 
     if (loading) return <p className="p-6 text-stone-600">Loading...</p>;
 
     return (
-        <div className="min-h-screen bg-stone-100 px-4 py-8">
-            <div className="max-w-5xl mx-auto bg-amber-50 border border-stone-300 rounded-xl shadow-lg p-6 space-y-6">
-                <div className="flex items-start justify-between gap-4">
-                    <div>
-                        <h1 className="text-3xl font-bold text-stone-800">
-                            🧙 Character Sheet
-                        </h1>
-                        <p className="text-stone-600 text-sm">
-                            Update the essentials from your D&D 5e page 1.
-                        </p>
-                    </div>
-
-                    <button
-                        type="button"
-                        onClick={() => navigate("/dashboard")}
-                        className="px-3 py-2 rounded-md border border-stone-300 bg-stone-100 hover:bg-stone-200 text-stone-700"
-                    >
-                        Back
-                    </button>
-                </div>
-
+        <FormCard
+            title="🧙 Character Sheet"
+            subtitle="Update the essentials from your D&D 5e page 1."
+            error={error}
+            backTo="/dashboard"
+        >
                 <form onSubmit={submit} className="space-y-6">
                     {/* Top Identity */}
                     <section className="bg-stone-50 border border-stone-300 rounded-lg p-4">
@@ -591,7 +587,6 @@ export default function EditCharacter() {
                         </button>
                     </div>
                 </form>
-            </div>
-        </div>
+        </FormCard>
     );
 }

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { getCampaigns, deleteCampaign } from "../api/campaignApi";
 import CampaignItem from "../components/CampaignItem";
+import Button from "../components/UI/Button";
 
 type Character = {
     id: number;
@@ -48,12 +49,12 @@ export default function Dashboard() {
                     </div>
 
                     {user?.role === "DM" && (
-                        <button
+                        <Button
+                            variant="primary"
                             onClick={() => navigate("/campaigns/new")}
-                            className="bg-red-800 text-white px-5 py-2 rounded-lg shadow hover:bg-red-700 transition"
                         >
                             + Create Campaign
-                        </button>
+                        </Button>
                     )}
                 </header>
 

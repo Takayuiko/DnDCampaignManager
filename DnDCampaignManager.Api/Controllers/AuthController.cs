@@ -36,7 +36,7 @@ namespace DnDCampingManager.Api.Controllers
                 return BadRequest(ModelState);
 
             if (await _dndContext.Users.AnyAsync(u => u.Email == Register.Email))
-                return BadRequest("Email already registered");
+                return BadRequest(new { message = "Email already registered" });
 
             var user = new User
             {

@@ -16,6 +16,7 @@ export function updateCampaign(id: number, data: { name: string; description: st
 export function addPlayerToCampaign(campaignId: number, email: string) {
     return api.post(`/campaigns/${campaignId}/players`, { email });
 }
+
 export const removePlayerFromCampaign = (campaignId: number, playerId: number) =>
     api.delete(`/campaigns/${campaignId}/players/${playerId}`)
 
