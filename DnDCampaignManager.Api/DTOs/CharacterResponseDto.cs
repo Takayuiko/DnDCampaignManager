@@ -33,6 +33,19 @@ namespace DnDCampaignManager.Api.DTOs
         public int HitPointCurrent { get; set; }
         public int HitPointTemporary { get; set; }
 
+        public bool Inspiration { get; set; }
+
+        // Hit Dice
+        public string HitDiceDie { get; set; } = "d8";
+        public int HitDiceTotal { get; set; } = 1;
+        public int HitDiceRemaining { get; set; } = 1;
+
+        // Death Saves
+        public int DeathSaveSuccesses { get; set; }
+        public int DeathSaveFailures { get; set; }
+
+        // Attacks and Skills
+        public List<CharacterAttackDto> Attacks { get; set; } = new();
         public List<CharacterSkillDto> Skills { get; set; } = new();
     }
 

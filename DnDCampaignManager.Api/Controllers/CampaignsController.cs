@@ -69,10 +69,8 @@ namespace DnDCampaignManager.Api.Controllers
             var partCamp = await _dnDxDbContext.CampaignPlayer.Where(x => x.UserId == userId).ToListAsync();
 
             var campaigns = await _dnDxDbContext.Campaigns
-                .Where(c =>
-                    c.OwnerId == userId || partCamp.Select(x => x.CampaignId).ToList().Contains(c.Id)
-                )
-                .Include(c => c.Players)
+                .Where(c => c.OwnerId == userId || c.Players.Any(p => p.UserId == userId))
+                .Include(c => c.Players).ThenInclude(p => p.User)
                 .Include(c => c.Characters)
                 .Select(c => new CampaignResponseDto(
                     c.Id,
@@ -81,18 +79,15 @@ namespace DnDCampaignManager.Api.Controllers
                     c.OwnerId,
                     c.Characters.Select(ch => new CharacterCampaignResponseDto
                     {
-                        Id = ch.Id,
+                         Id = ch.Id,
                         UserId = ch.UserId,
                         Name = ch.Name,
                         Class = ch.Class,
                         Race = ch.Race,
                         Level = ch.Level
                     }).ToList(),
-                    c.Players.Select(p => new PlayerResponseDto(
-                        p.UserId,
-                        p.User.Email
-                    )).ToList()
-                )).ToListAsync();
+                    c.Players.Select(p => new PlayerResponseDto(p.UserId, p.User.Email)).ToList()
+                    )).ToListAsync();
 
             return Ok(campaigns);
         }
@@ -235,33 +230,48 @@ namespace DnDCampaignManager.Api.Controllers
         public async Task<IActionResult> RemovePlayerFromCampaign(int campaignId, int playerId)
         {
             var userId = GetUserId();
+
+            var campaign = await _dnDxDbContext.Campaigns
+                .Include(c => c.Players)
+                .SingleOrDefaultAsync(c => c.Id == campaignId && c.OwnerId == userId);
+
+            if (campaign == null) return NotFound();
+
+            if (playerId == userId)
+                return BadRequest("You cannot remove yourself from the campaign.");
+
+            var link = campaign.Players.SingleOrDefault(p => p.UserId == playerId);
+            if (link == null) return NotFound("Player not in campaign.");
+
+            _dnDxDbContext.CampaignPlayer.Remove(link);
+            await _dnDxDbContext.SaveChangesAsync();
+
+            return NoContent();
+        }
+
+        [HttpDelete("{campaignId}/characters/{characterId:int}")]
+        [Authorize]
+        public async Task<IActionResult> DeleteCharacter(int campaignId, int characterId)
+        {
+            var userId = GetUserId();
             var isDM = User.IsInRole("DM");
 
-            // Load character AND validate it belongs to the campaign
             var character = await _dnDxDbContext.Characters
-                .SingleOrDefaultAsync(ch =>
-                    ch.UserId == playerId &&
-                    ch.CampaignId == campaignId
-                );
+                .SingleOrDefaultAsync(ch => ch.Id == characterId && ch.CampaignId == campaignId);
 
             if (character == null)
                 return NotFound("Character not found in this campaign.");
 
             if (isDM)
             {
-                // DM can delete only if they own the campaign
                 var ownsCampaign = await _dnDxDbContext.Campaigns.AnyAsync(c =>
-                    c.Id == campaignId &&
-                    c.OwnerId == userId
-                );
+                    c.Id == campaignId && c.OwnerId == userId);
 
-                if (!ownsCampaign)
-                    return Forbid();
+                if (!ownsCampaign) return Forbid();
             }
             else
             {
-                if (character.UserId != userId)
-                    return Forbid();
+                if (character.UserId != userId) return Forbid();
             }
 
             _dnDxDbContext.Characters.Remove(character);

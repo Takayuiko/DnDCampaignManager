@@ -40,8 +40,21 @@ namespace DnDCampaignManager.Api.Models
         public int HitPointCurrent { get; set; }
         public int HitPointTemporary { get; set; }
 
+        public bool Inspiration { get; set; }
+
+        // Hit dice
+        public string? HitDiceDie { get; set; }
+        public int? HitDiceTotal { get; set; }
+        public int? HitDiceRemaining { get; set; }
+
+        // Death Saves
+        public int DeathSaveSuccesses { get; set; }
+        public int DeathSaveFailures { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+        // Attacks and Skills
+        public List<CharacterAttack> Attacks { get; set; } = new();
         public List<CharacterSkill> Skills { get; set; } = new();
     }
 

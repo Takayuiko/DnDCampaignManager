@@ -4,16 +4,19 @@ using DnDCampingManager.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace DnDCampaignManager.Api.Migrations
+namespace DnDCampaignManager.Api.Migrations.SqlServer
 {
     [DbContext(typeof(DnDxDbContext))]
-    partial class DnDxDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260120144841_InitialSqlServer")]
+    partial class InitialSqlServer
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

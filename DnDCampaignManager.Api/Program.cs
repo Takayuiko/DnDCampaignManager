@@ -8,9 +8,8 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using System;
-using System.Security.Claims;
 using System.Text;
+using Microsoft.EntityFrameworkCore.SqlServer;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -51,9 +50,21 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
-// DbContext (SQLite)
+// DbContext
+var cs = builder.Configuration.GetConnectionString("DefaultConnection") ?? "";
+
 builder.Services.AddDbContext<DnDxDbContext>(options =>
-    options.UseSqlite("Data Source=dndapp.db"));
+{
+    var looksLikeSqlServer =
+        cs.Contains("Server=", StringComparison.OrdinalIgnoreCase) ||
+        cs.Contains(".database.windows.net", StringComparison.OrdinalIgnoreCase) ||
+        cs.Contains("Initial Catalog=", StringComparison.OrdinalIgnoreCase);
+
+    if (looksLikeSqlServer)
+        options.UseSqlServer(cs);
+    else
+        options.UseSqlite(cs);
+});
 
 // Validate JWT secret
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
@@ -140,6 +151,17 @@ if (builder.Environment.IsDevelopment())
 
 // Build App
 var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<DnDxDbContext>();
+    var provider = db.Database.ProviderName ?? "";
+
+    if (provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
+        db.Database.Migrate();
+    else
+        db.Database.EnsureCreated();
+}
 
 // middleware pipeline
 if (app.Environment.IsDevelopment())
