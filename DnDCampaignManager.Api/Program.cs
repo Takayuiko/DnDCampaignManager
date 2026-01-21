@@ -151,9 +151,6 @@ if (builder.Environment.IsDevelopment())
 // Build App
 var app = builder.Build();
 
-app.MapGet("/", () => Results.Ok("DnD Campaign API is running"))
-   .AllowAnonymous();
-
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<DnDxDbContext>();
