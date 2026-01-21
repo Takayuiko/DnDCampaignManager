@@ -76,9 +76,9 @@ jobs:
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: AZUREAPPSERVICE_CLIENTID_D95FA1973BE646F4B8D90BF389A6DDEB
-          tenant-id: AZUREAPPSERVICE_TENANTID_8DFBDE5E1A0E4E4DA130C64F7E4F1488
-          subscription-id: AZUREAPPSERVICE_SUBSCRIPTIONID_C32B8157203C47BA9B23A70B3F26696A
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_D95FA1973BE646F4B8D90BF389A6DDEB }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8DFBDE5E1A0E4E4DA130C64F7E4F1488 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_C32B8157203C47BA9B23A70B3F26696A }}
 
       - name: Deploy to App Service
         uses: azure/webapps-deploy@v3
