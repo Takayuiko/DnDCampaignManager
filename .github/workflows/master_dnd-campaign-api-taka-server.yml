@@ -1,12 +1,8 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
+name: Build and deploy - DnDCampaignManager
 
-name: Build and deploy ASP.Net Core app to Azure Web App - dnd-campaign-api-taka-server
-
-on: 
+on:
   push:
-    branches:
-      - master
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
@@ -21,14 +17,15 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: "8.0.x"
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: DnDCampaignManager.web/package-lock.json
 
-      # --- Frontend first ---
       - name: Install frontend deps
         working-directory: DnDCampaignManager.web
         run: npm ci
@@ -37,61 +34,45 @@ jobs:
         working-directory: DnDCampaignManager.web
         run: npm run build
 
-      # Copy dist -> API wwwroot (PowerShell)
-      - name: Copy frontend to API wwwroot
-        shell: pwsh
+      - name: Copy frontend dist -> API wwwroot
         run: |
-            $wwwroot = "DnDCampaignManager.Api/wwwroot"
-            if (!(Test-Path $wwwroot)) { New-Item -ItemType Directory -Path $wwwroot | Out-Null }
+          rm -rf DnDCampaignManager.Api/wwwroot/*
+          mkdir -p DnDCampaignManager.Api/wwwroot
+          cp -r DnDCampaignManager.web/dist/* DnDCampaignManager.Api/wwwroot/
 
-            # Clean wwwroot safely
-            Get-ChildItem -Path $wwwroot -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-
-            # Copy dist into wwwroot
-            Copy-Item -Path "DnDCampaignManager.web/dist/*" -Destination $wwwroot -Recurse -Force
-
-            # Verify (this is important)
-            Write-Host "=== wwwroot now contains ==="
-            Get-ChildItem -Path $wwwroot -Recurse | Select-Object FullName
-
-      - name: Build API (after wwwroot exists)
-        run: dotnet build DnDCampaignManager.Api/DnDCampaignManager.Api.csproj -c Release
-
-      # --- Now publish API (includes wwwroot) ---
+      # IMPORTANT: publish AFTER wwwroot is populated
       - name: Publish API
-        run: dotnet publish DnDCampaignManager.Api/DnDCampaignManager.Api.csproj -c Release -o "${{ env.DOTNET_ROOT }}/myapp"
+        run: dotnet publish DnDCampaignManager.Api/DnDCampaignManager.Api.csproj -c Release -o ./publish
 
-      - name: Upload artifact for deployment job
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: .net-app
-          path: ${{ env.DOTNET_ROOT }}/myapp
+          name: app
+          path: ./publish
 
   deploy:
     runs-on: windows-latest
     needs: build
     permissions:
-      id-token: write
+      id-token: write   # REQUIRED for OIDC
       contents: read
 
     steps:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: .net-app
-          path: myapp
+          name: app
+          path: ./app
 
-      - name: Login to Azure
+      - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_D95FA1973BE646F4B8D90BF389A6DDEB }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8DFBDE5E1A0E4E4DA130C64F7E4F1488 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_C32B8157203C47BA9B23A70B3F26696A }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy to Azure Web App
+      - name: Deploy to App Service
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'dnd-campaign-api-taka-server'
-          slot-name: 'Production'
-          package: myapp
-   
+          app-name: dnd-campaign-api-taka-server
+          package: ./app
