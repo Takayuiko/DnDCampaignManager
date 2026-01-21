@@ -36,9 +36,18 @@ jobs:
 
       - name: Copy frontend dist -> API wwwroot
         run: |
-          rm -rf DnDCampaignManager.Api/wwwroot/*
-          mkdir -p DnDCampaignManager.Api/wwwroot
-          cp -r DnDCampaignManager.web/dist/* DnDCampaignManager.Api/wwwroot/
+          $wwwroot = "DnDCampaignManager.Api/wwwroot"
+          if (!(Test-Path $wwwroot)) { New-Item -ItemType Directory -Path $wwwroot | Out-Null }
+          
+          # Clean wwwroot
+          Get-ChildItem -Path $wwwroot -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+          # Copy dist into wwwroot
+          Copy-Item -Path "DnDCampaignManager.web/dist/*" -Destination $wwwroot -Recurse -Force
+
+          # Sanity check
+          Write-Host "=== wwwroot contents ==="
+          Get-ChildItem -Path $wwwroot -Recurse | Select-Object FullName
 
       # IMPORTANT: publish AFTER wwwroot is populated
       - name: Publish API
