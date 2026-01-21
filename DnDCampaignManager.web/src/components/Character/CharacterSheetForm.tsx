@@ -142,7 +142,7 @@ export default function CharacterSheetForm({
     onSubmit,
     submitLabel,
     submitting,
-    error,
+    error
 }: Props) {
     const handleChange = (
         e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>

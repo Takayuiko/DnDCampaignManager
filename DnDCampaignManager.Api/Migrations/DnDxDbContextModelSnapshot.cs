@@ -314,7 +314,7 @@ namespace DnDCampaignManager.Api.Migrations
                     b.HasOne("DnDCampingManager.Api.Models.User", "Owner")
                         .WithMany("OwnedCampaigns")
                         .HasForeignKey("OwnerId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.Navigation("Owner");
@@ -350,7 +350,7 @@ namespace DnDCampaignManager.Api.Migrations
                     b.HasOne("DnDCampingManager.Api.Models.User", "User")
                         .WithMany("Characters")
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.Navigation("Campaign");

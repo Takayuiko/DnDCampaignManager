@@ -27,7 +27,7 @@ namespace DnDCampingManager.Api.Data
                 .HasOne(c => c.Owner)
                 .WithMany(u => u.OwnedCampaigns)
                 .HasForeignKey(c => c.OwnerId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .OnDelete(DeleteBehavior.NoAction);
 
             modelBuilder.Entity<CampaignPlayer>()
                 .HasKey(cp => new { cp.CampaignId, cp.UserId });
@@ -45,18 +45,20 @@ namespace DnDCampingManager.Api.Data
                 .OnDelete(DeleteBehavior.NoAction);
 
             modelBuilder.Entity<Character>()
+                .HasIndex(c => new { c.CampaignId, c.UserId })
+                .IsUnique();
+
+            modelBuilder.Entity<Character>()
                 .HasOne(c => c.User)
                 .WithMany(u => u.Characters)
-                .HasForeignKey(c => c.UserId);
+                .HasForeignKey(c => c.UserId)
+                .OnDelete(DeleteBehavior.NoAction);
 
             modelBuilder.Entity<Character>()
                 .HasOne(c => c.Campaign)
                 .WithMany(ca => ca.Characters)
-                .HasForeignKey(c => c.CampaignId);
-
-            modelBuilder.Entity<Character>()
-                .HasIndex(c => new { c.CampaignId, c.UserId })
-                .IsUnique();
+                .HasForeignKey(c => c.CampaignId)
+                .OnDelete(DeleteBehavior.Cascade);
 
             modelBuilder.Entity<CharacterSkill>()
                 .HasOne(cs => cs.Character)

@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DnDCampaignManager.Api.Migrations
 {
     [DbContext(typeof(DnDxDbContext))]
-    [Migration("20260121013542_InitialSqlServer")]
+    [Migration("20260121025544_InitialSqlServer")]
     partial class InitialSqlServer
     {
         /// <inheritdoc />
@@ -317,7 +317,7 @@ namespace DnDCampaignManager.Api.Migrations
                     b.HasOne("DnDCampingManager.Api.Models.User", "Owner")
                         .WithMany("OwnedCampaigns")
                         .HasForeignKey("OwnerId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.Navigation("Owner");
@@ -353,7 +353,7 @@ namespace DnDCampaignManager.Api.Migrations
                     b.HasOne("DnDCampingManager.Api.Models.User", "User")
                         .WithMany("Characters")
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.Navigation("Campaign");
