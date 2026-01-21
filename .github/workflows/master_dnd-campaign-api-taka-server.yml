@@ -3,7 +3,7 @@
 
 name: Build and deploy ASP.Net Core app to Azure Web App - dnd-campaign-api-taka-server
 
-on:
+on: 
   push:
     branches:
       - master
