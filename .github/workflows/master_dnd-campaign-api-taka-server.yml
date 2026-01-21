@@ -29,6 +29,20 @@ jobs:
       - name: dotnet publish
         run: dotnet publish -c Release -o "${{env.DOTNET_ROOT}}/myapp"
 
+      - name: Install frontend deps
+        working-directory: DnDCampaignManager.Client
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: DnDCampaignManager.Client
+        run: npm run build
+
+      # Copy dist -> API wwwroot
+      - name: Copy frontend to API wwwroot
+        run: |
+          rm -rf DnDCampaignManager.Api/wwwroot/*
+          cp -r DnDCampaignManager.web/dist/* DnDCampaignManager.Api/wwwroot/
+
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
