@@ -41,18 +41,21 @@ jobs:
       - name: Copy frontend to API wwwroot
         shell: pwsh
         run: |
-          $wwwroot = "DnDCampaignManager.Api/wwwroot"
-          if (!(Test-Path $wwwroot)) { New-Item -ItemType Directory -Path $wwwroot | Out-Null }
+            $wwwroot = "DnDCampaignManager.Api/wwwroot"
+            if (!(Test-Path $wwwroot)) { New-Item -ItemType Directory -Path $wwwroot | Out-Null }
 
-          # Clean wwwroot
-          Get-ChildItem -Path $wwwroot -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            # Clean wwwroot safely
+            Get-ChildItem -Path $wwwroot -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
-          # Copy dist into wwwroot
-          Copy-Item -Path "DnDCampaignManager.web/dist/*" -Destination $wwwroot -Recurse -Force
+            # Copy dist into wwwroot
+            Copy-Item -Path "DnDCampaignManager.web/dist/*" -Destination $wwwroot -Recurse -Force
 
-          # Sanity check
-          Write-Host "=== wwwroot contents ==="
-          Get-ChildItem -Path $wwwroot -Recurse | Select-Object FullName
+            # Verify (this is important)
+            Write-Host "=== wwwroot now contains ==="
+            Get-ChildItem -Path $wwwroot -Recurse | Select-Object FullName
+
+      - name: Build API (after wwwroot exists)
+        run: dotnet build DnDCampaignManager.Api/DnDCampaignManager.Api.csproj -c Release
 
       # --- Now publish API (includes wwwroot) ---
       - name: Publish API
