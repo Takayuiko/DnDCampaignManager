@@ -28,15 +28,4 @@
     <Folder Include="wwwroot\" />
   </ItemGroup>
   
-  <Target Name="CopyFrontendToWwwroot" AfterTargets="Build">
-	  <ItemGroup>
-		<FrontendDist Include="..\DnDCampaignManager.web\dist\**\*" />
-	  </ItemGroup>
-
-	  <RemoveDir Directories="$(ProjectDir)wwwroot" />
-	  <MakeDir Directories="$(ProjectDir)wwwroot" />
-
-	  <Copy SourceFiles="@(FrontendDist)" DestinationFiles="@(FrontendDist->'$(ProjectDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" />
-	</Target>
-	
 </Project>
