@@ -41,7 +41,7 @@ namespace DnDCampingManager.Api.Controllers
             var user = new User
             {
                 Email = Register.Email,
-                Role = Roles.Player
+                Role = Roles.DM
             };
 
             user.PasswordHash = _hasher.HashPassword(user, Register.Password);
