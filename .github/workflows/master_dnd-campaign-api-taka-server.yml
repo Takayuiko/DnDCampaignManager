@@ -30,11 +30,11 @@ jobs:
         run: dotnet publish -c Release -o "${{env.DOTNET_ROOT}}/myapp"
 
       - name: Install frontend deps
-        working-directory: DnDCampaignManager.Client
+        working-directory: DnDCampaignManager.web
         run: npm ci
 
       - name: Build frontend
-        working-directory: DnDCampaignManager.Client
+        working-directory: DnDCampaignManager.web
         run: npm run build
 
       # Copy dist -> API wwwroot
