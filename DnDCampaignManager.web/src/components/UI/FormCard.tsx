@@ -1,14 +1,21 @@
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import ErrorPanel from "./ErrorPanel";
+import Button from "./Button";
 
 type Props = {
     title: string;
     subtitle?: string;
     backTo?: string; // default "/dashboard"
     error?: string | null;
-    rightActions?: ReactNode; // optional (e.g., extra buttons)
-    children: ReactNode; // usually your <form>...</form>
+
+    /** New name */
+    rightActions?: ReactNode;
+
+    /** Old name (kept for compatibility) */
+    topRight?: ReactNode;
+
+    children: ReactNode;
 };
 
 export default function FormCard({
@@ -17,9 +24,12 @@ export default function FormCard({
     backTo = "/dashboard",
     error,
     rightActions,
-    children
+    topRight,
+    children,
 }: Props) {
     const navigate = useNavigate();
+
+    const actions = rightActions ?? topRight;
 
     return (
         <div className="min-h-screen bg-stone-100 px-4 py-8">
@@ -31,20 +41,16 @@ export default function FormCard({
                     </div>
 
                     <div className="flex items-center gap-2">
-                        {rightActions}
-                        <button
-                            type="button"
-                            onClick={() => navigate(backTo)}
-                            className="px-3 py-2 rounded-md border border-stone-300 bg-stone-100 hover:bg-stone-200 text-stone-700"
-                        >
+                        {actions}
+                        <Button type="button" variant="secondary" onClick={() => navigate(backTo)}>
                             Back
-                        </button>
+                        </Button>
                     </div>
                 </div>
 
-                <ErrorPanel message={error} />
+                {error && <ErrorPanel message={error} />}
 
-                {children}
+                <div>{children}</div>
             </div>
         </div>
     );

@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-type Variant = "primary" | "secondary" | "danger" | "ghost";
+type Variant = "primary" | "secondary" | "subtle" | "danger" | "ghost";
 type Size = "sm" | "md";
 
 type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -24,6 +24,8 @@ export default function Button({
             "bg-emerald-700 text-white hover:bg-emerald-600 focus:ring-emerald-700",
         secondary:
             "bg-stone-200 text-stone-800 hover:bg-stone-300 focus:ring-stone-400",
+        subtle:
+            "bg-stone-100 text-stone-700 hover:bg-stone-200 focus:ring-stone-300",
         danger:
             "bg-red-800 text-white hover:bg-red-700 focus:ring-red-800",
         ghost:
