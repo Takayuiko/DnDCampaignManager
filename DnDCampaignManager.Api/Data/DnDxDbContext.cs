@@ -35,12 +35,14 @@ namespace DnDCampingManager.Api.Data
             modelBuilder.Entity<CampaignPlayer>()
                 .HasOne(cp => cp.Campaign)
                 .WithMany(c => c.Players)
-                .HasForeignKey(cp => cp.CampaignId);
+                .HasForeignKey(cp => cp.CampaignId)
+                .OnDelete(DeleteBehavior.Cascade);
 
             modelBuilder.Entity<CampaignPlayer>()
                 .HasOne(cp => cp.User)
                 .WithMany(u => u.Campaigns)
-                .HasForeignKey(cp => cp.UserId);
+                .HasForeignKey(cp => cp.UserId)
+                .OnDelete(DeleteBehavior.NoAction);
 
             modelBuilder.Entity<Character>()
                 .HasOne(c => c.User)

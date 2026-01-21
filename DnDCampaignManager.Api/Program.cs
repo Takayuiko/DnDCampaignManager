@@ -9,7 +9,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
-using Microsoft.EntityFrameworkCore.SqlServer;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -170,16 +169,22 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
     app.UseCors("FrontendPolicy");
 }
-else { app.UseHttpsRedirection(); }
 
-app.UseAuthentication();
-app.UseAuthorization();
-app.MapControllers();
+app.UseHttpsRedirection();
 
 if (!app.Environment.IsDevelopment())
 {
     app.UseDefaultFiles();
     app.UseStaticFiles();
+}
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
+
+if (!app.Environment.IsDevelopment())
+{
     app.MapFallbackToFile("index.html");
 }
 

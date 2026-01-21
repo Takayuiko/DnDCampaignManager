@@ -331,7 +331,7 @@ namespace DnDCampaignManager.Api.Migrations
                     b.HasOne("DnDCampingManager.Api.Models.User", "User")
                         .WithMany("Campaigns")
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.Navigation("Campaign");

@@ -1,7 +1,13 @@
 import axios from "axios";
 
+const baseURL =
+    import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "/api";
+// - local dev: set VITE_API_BASE_URL=http://localhost:5000/api
+// - production: you can use "/api" if you host SPA + API together,
+//   or set it to https://your-api.azurewebsites.net/api
+
 const api = axios.create({
-    baseURL: "http://localhost:5000/api",
+    baseURL,
     withCredentials: true,
 });
 
@@ -13,7 +19,6 @@ export const setLoggingOut = (value: boolean) => {
     loggingOut = value;
 };
 
-// Attach token
 api.interceptors.request.use(config => {
     const token = localStorage.getItem("token");
     if (token) {
@@ -22,20 +27,19 @@ api.interceptors.request.use(config => {
     return config;
 });
 
-// Response interceptor
 api.interceptors.response.use(
     res => res,
     async error => {
         const original = error.config;
 
-        if (loggingOut) {
-            return Promise.reject(error);
-        }
+        if (loggingOut) return Promise.reject(error);
 
         const isAuthEndpoint =
             original?.url?.includes("/auth/login") ||
-            original?.url?.includes("/auth/register");
+            original?.url?.includes("/auth/register") ||
+            original?.url?.includes("/auth/refresh");
 
+        // Don't try to refresh if login/register/refresh itself fails
         if (error.response?.status === 401 && isAuthEndpoint) {
             return Promise.reject(error);
         }
@@ -68,10 +72,7 @@ api.interceptors.response.use(
                 localStorage.removeItem("token");
                 delete api.defaults.headers.common.Authorization;
 
-                if (!loggingOut) {
-                    window.location.href = "/login";
-                }
-
+                if (!loggingOut) window.location.href = "/login";
                 return Promise.reject(error);
             } finally {
                 isRefreshing = false;

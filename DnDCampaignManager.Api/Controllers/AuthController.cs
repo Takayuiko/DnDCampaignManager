@@ -58,9 +58,10 @@ namespace DnDCampingManager.Api.Controllers
             Response.Cookies.Append("refreshToken", refreshToken.Token, new CookieOptions
             {
                 HttpOnly = true,
-                Secure = false,
-                SameSite = SameSiteMode.Strict,
-                Expires = refreshToken.ExpiresAt
+                Secure = true,
+                SameSite = SameSiteMode.Lax,
+                Expires = refreshToken.ExpiresAt,
+                Path = "/api/auth"
             });
 
             return Ok(new { accessToken = accessToken });
@@ -92,9 +93,10 @@ namespace DnDCampingManager.Api.Controllers
             Response.Cookies.Append("refreshToken", refreshToken.Token, new CookieOptions
             {
                 HttpOnly = true,
-                Secure = false,
-                SameSite = SameSiteMode.Strict,
-                Expires = refreshToken.ExpiresAt
+                Secure = true,
+                SameSite = SameSiteMode.Lax,
+                Expires = refreshToken.ExpiresAt,
+                Path = "/api/auth"
             });
 
             return Ok(new { accessToken = accessToken });
@@ -168,9 +170,10 @@ namespace DnDCampingManager.Api.Controllers
                 new CookieOptions
                 {
                     HttpOnly = true,
-                    Secure = false, // true in prod
-                    SameSite = SameSiteMode.Strict,
-                    Expires = newRefreshToken.ExpiresAt
+                    Secure = true,
+                    SameSite = SameSiteMode.Lax,
+                    Expires = newRefreshToken.ExpiresAt,
+                    Path = "/api/auth"
                 });
 
             return Ok(new { accessToken = newAccessToken });
