@@ -13,22 +13,22 @@ jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: read #This is required for actions/checkout
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up .NET Core
+      - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.x'
+          dotnet-version: '8.0.x'
 
-      - name: Build with dotnet
-        run: dotnet build --configuration Release
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-      - name: dotnet publish
-        run: dotnet publish -c Release -o "${{env.DOTNET_ROOT}}/myapp"
-
+      # --- Frontend first ---
       - name: Install frontend deps
         working-directory: DnDCampaignManager.web
         run: npm ci
@@ -37,31 +37,47 @@ jobs:
         working-directory: DnDCampaignManager.web
         run: npm run build
 
-      # Copy dist -> API wwwroot
+      # Copy dist -> API wwwroot (PowerShell)
       - name: Copy frontend to API wwwroot
+        shell: pwsh
         run: |
-          rm -rf DnDCampaignManager.Api/wwwroot/*
-          cp -r DnDCampaignManager.web/dist/* DnDCampaignManager.Api/wwwroot/
+          $wwwroot = "DnDCampaignManager.Api/wwwroot"
+          if (!(Test-Path $wwwroot)) { New-Item -ItemType Directory -Path $wwwroot | Out-Null }
+
+          # Clean wwwroot
+          Get-ChildItem -Path $wwwroot -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+          # Copy dist into wwwroot
+          Copy-Item -Path "DnDCampaignManager.web/dist/*" -Destination $wwwroot -Recurse -Force
+
+          # Sanity check
+          Write-Host "=== wwwroot contents ==="
+          Get-ChildItem -Path $wwwroot -Recurse | Select-Object FullName
+
+      # --- Now publish API (includes wwwroot) ---
+      - name: Publish API
+        run: dotnet publish DnDCampaignManager.Api/DnDCampaignManager.Api.csproj -c Release -o "${{ env.DOTNET_ROOT }}/myapp"
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: .net-app
-          path: ${{env.DOTNET_ROOT}}/myapp
+          path: ${{ env.DOTNET_ROOT }}/myapp
 
   deploy:
     runs-on: windows-latest
     needs: build
     permissions:
-      id-token: write #This is required for requesting the JWT
-      contents: read #This is required for actions/checkout
+      id-token: write
+      contents: read
 
     steps:
-      - name: Download artifact from build job
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: .net-app
-      
+          path: myapp
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -70,10 +86,9 @@ jobs:
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_C32B8157203C47BA9B23A70B3F26696A }}
 
       - name: Deploy to Azure Web App
-        id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'dnd-campaign-api-taka-server'
           slot-name: 'Production'
-          package: .
-          
+          package: myapp
+   
