@@ -15,6 +15,7 @@ type Campaign = {
     id: number;
     name: string;
     description: string;
+    ownerId: number;
     characters: Character[];
 };
 
@@ -22,6 +23,7 @@ export default function Dashboard() {
     const { user, loading } = useAuth();
     const navigate = useNavigate();
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+    const isDM = user?.role === "DM";
 
     const loadCampaigns = async () => {
         const res = await getCampaigns();
@@ -48,7 +50,7 @@ export default function Dashboard() {
                         </p>
                     </div>
 
-                    {user?.role === "DM" && (
+                    {isDM && (
                         <Button
                             variant="primary"
                             onClick={() => navigate("/campaigns/new")}
@@ -74,7 +76,7 @@ export default function Dashboard() {
                                 <CampaignItem
                                     key={campaign.id}
                                     campaign={campaign}
-                                    isDM={user?.role === "DM"}
+                                    isDM={isDM && campaign.ownerId === user?.id}
                                     onEdit={id => navigate(`/campaigns/${id}/edit`)}
                                     onDelete={async id => {
                                         await deleteCampaign(id);

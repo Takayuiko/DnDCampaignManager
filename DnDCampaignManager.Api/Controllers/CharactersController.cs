@@ -6,7 +6,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
-using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
 
 namespace DnDCampaignManager.Api.Controllers
 {
@@ -278,7 +277,7 @@ namespace DnDCampaignManager.Api.Controllers
             if (character == null)
                 return NotFound();
 
-            var canView = (isDM && character.Campaign.OwnerId == userId) || (!isDM && character.UserId == userId);
+            var canView = (isDM && character.Campaign.OwnerId == userId) || (!isDM && character.UserId == userId) || (isDM && character.UserId == userId);
 
             if (!canView)
                 return Forbid();
