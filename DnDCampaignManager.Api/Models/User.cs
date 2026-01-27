@@ -12,6 +12,7 @@ namespace DnDCampingManager.Api.Models
         public List<CampaignPlayer> Campaigns { get; set; } = new();
         public ICollection<Character> Characters { get; set; } = new List<Character>();
         public ICollection<Campaign> OwnedCampaigns { get; set; } = new List<Campaign>();
+        public ICollection<CharacterClassOption> CharacterClassOptions { get; set; } = new List<CharacterClassOption>();
         public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
     }
 }

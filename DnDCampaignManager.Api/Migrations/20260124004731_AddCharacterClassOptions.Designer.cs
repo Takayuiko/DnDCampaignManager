@@ -4,6 +4,7 @@ using DnDCampingManager.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DnDCampaignManager.Api.Migrations
 {
     [DbContext(typeof(DnDxDbContext))]
-    partial class DnDxDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260124004731_AddCharacterClassOptions")]
+    partial class AddCharacterClassOptions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -103,6 +106,12 @@ namespace DnDCampaignManager.Api.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<int>("DeathSaveFailures")
+                        .HasColumnType("int");
+
+                    b.Property<int>("DeathSaveSuccesses")
+                        .HasColumnType("int");
 
                     b.Property<int>("Dexterity")
                         .HasColumnType("int");
@@ -212,9 +221,6 @@ namespace DnDCampaignManager.Api.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
-                    b.Property<int>("CampaignId")
-                        .HasColumnType("int");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
@@ -229,19 +235,12 @@ namespace DnDCampaignManager.Api.Migrations
                     b.Property<int>("UserId")
                         .HasColumnType("int");
 
-                    b.Property<int?>("UserId1")
-                        .HasColumnType("int");
-
                     b.HasKey("Id");
 
-                    b.HasIndex("CampaignId");
-
-                    b.HasIndex("UserId1");
-
-                    b.HasIndex("UserId", "NormalizedName", "CampaignId")
+                    b.HasIndex("UserId", "NormalizedName")
                         .IsUnique();
 
-                    b.ToTable("CharacterClassOptions");
+                    b.ToTable("CharacterClassOption");
                 });
 
             modelBuilder.Entity("DnDCampaignManager.Api.Models.CharacterSkill", b =>
@@ -405,23 +404,11 @@ namespace DnDCampaignManager.Api.Migrations
 
             modelBuilder.Entity("DnDCampaignManager.Api.Models.CharacterClassOption", b =>
                 {
-                    b.HasOne("DnDCampaignManager.Api.Models.Campaign", "Campaign")
-                        .WithMany()
-                        .HasForeignKey("CampaignId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
                     b.HasOne("DnDCampingManager.Api.Models.User", "User")
-                        .WithMany()
+                        .WithMany("CharacterClassOptions")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.HasOne("DnDCampingManager.Api.Models.User", null)
-                        .WithMany("CharacterClassOptions")
-                        .HasForeignKey("UserId1");
-
-                    b.Navigation("Campaign");
 
                     b.Navigation("User");
                 });

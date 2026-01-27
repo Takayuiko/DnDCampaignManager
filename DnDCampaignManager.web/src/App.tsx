@@ -51,7 +51,7 @@ function App() {
                     }
                 />
                 <Route
-                    path="/campaigns/:id/characters"
+                    path="/campaigns/:campaignId/characters"
                     element={
                         <ProtectedRoute>
                             <CreateCharacter />

@@ -4,6 +4,7 @@ using DnDCampingManager.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DnDCampaignManager.Api.Migrations
 {
     [DbContext(typeof(DnDxDbContext))]
-    partial class DnDxDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260126173543_ScopeCharacterClassOptionsToCampaign")]
+    partial class ScopeCharacterClassOptionsToCampaign
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -103,6 +106,12 @@ namespace DnDCampaignManager.Api.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<int>("DeathSaveFailures")
+                        .HasColumnType("int");
+
+                    b.Property<int>("DeathSaveSuccesses")
+                        .HasColumnType("int");
 
                     b.Property<int>("Dexterity")
                         .HasColumnType("int");
@@ -238,7 +247,7 @@ namespace DnDCampaignManager.Api.Migrations
 
                     b.HasIndex("UserId1");
 
-                    b.HasIndex("UserId", "NormalizedName", "CampaignId")
+                    b.HasIndex("UserId", "NormalizedName")
                         .IsUnique();
 
                     b.ToTable("CharacterClassOptions");
