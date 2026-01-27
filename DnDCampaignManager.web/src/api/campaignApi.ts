@@ -29,7 +29,13 @@ export const getCharacter = (campaignId: number, characterId: number) =>
 export const getCharactersByCampaign = (campaignId: number) =>
     api.get(`/campaigns/${campaignId}/characters`);
 
-export const updateCharacterByCampaign = ( campaignId: number, characterId: number,
-    data: { name: string; class: string; race: string; level: number; } ) =>
-    api.put( `/campaigns/${campaignId}/characters/${characterId}`, data );
+export const updateCharacterByCampaign = ( campaignId: number, characterId: number, data: any ) =>
+    api.put(`/campaigns/${campaignId}/characters/${characterId}`, data);
+
+// Character Classes
+export const getCharacterClass = (campaignId: number) =>
+    api.get(`/campaigns/${campaignId}/character-classes`);
+
+export const addCharacterClass = (campaignId: number, data: { name: string; }) =>
+    api.post(`/campaigns/${campaignId}/character-classes`, data);
 

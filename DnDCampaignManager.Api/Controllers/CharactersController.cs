@@ -3,6 +3,7 @@ using DnDCampaignManager.Api.Models;
 using DnDCampaignManager.Api.Services;
 using DnDCampingManager.Api.Data;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
@@ -45,8 +46,6 @@ namespace DnDCampaignManager.Api.Controllers
             if (!isOwner && !isPlayer)
                 return Forbid();
 
-
-
             var character = new Character
             {
                 Name = create.Name,
@@ -72,22 +71,14 @@ namespace DnDCampaignManager.Api.Controllers
                 HitPointMax = create.HitPointMax,
                 HitPointCurrent = create.HitPointCurrent,
                 HitPointTemporary = create.HitPointTemporary,
-                Inspiration = create.Inspiration
+                Inspiration = create.Inspiration,
             };
-
-            character.Inspiration = create.Inspiration;
 
             if (create.HitDice is not null)
             {
                 character.HitDiceDie = create.HitDice.Die;
                 character.HitDiceTotal = create.HitDice.Total;
                 character.HitDiceRemaining = create.HitDice.Remaining;
-            }
-
-            if (create.DeathSaves is not null)
-            {
-                character.DeathSaveSuccesses = create.DeathSaves.Successes;
-                character.DeathSaveFailures = create.DeathSaves.Failures;
             }
 
             if (create.Attacks is not null)
@@ -101,6 +92,19 @@ namespace DnDCampaignManager.Api.Controllers
                         Damage = a.Damage
                     })
                     .ToList();
+            }
+
+            if (create.Skills != null && create.Skills.Count > 0)
+            {
+                foreach (var incoming in create.Skills)
+                {
+                    var existing = character.Skills.SingleOrDefault(s => s.Skill == incoming.Skill);
+                    if (existing == null) continue;
+
+                    existing.IsProficient = incoming.IsProficient;
+                    existing.IsExpertise = incoming.IsExpertise;
+                    existing.MiscBonus = incoming.MiscBonus;
+                }
             }
 
             _dnDxDbContext.Characters.Add(character);
@@ -134,11 +138,7 @@ namespace DnDCampaignManager.Api.Controllers
                 HitPointCurrent = character.HitPointCurrent,
                 HitPointTemporary = character.HitPointTemporary,
                 Inspiration = character.Inspiration,
-                HitDiceDie = character.HitDiceDie ?? string.Empty,
-                HitDiceTotal = character.HitDiceTotal ?? 0,
-                HitDiceRemaining = character.HitDiceRemaining ?? 0,
-                DeathSaveSuccesses = create.DeathSaves.Successes,
-                DeathSaveFailures = create.DeathSaves.Failures,
+                HitDice = new HitDiceDto(character.HitDiceDie ?? string.Empty, character.HitDiceTotal ?? 0, character.HitDiceRemaining ?? 0),
                 Attacks = character.Attacks.Select(a => new CharacterAttackDto
                 {
                     Id = a.Id,
@@ -146,6 +146,15 @@ namespace DnDCampaignManager.Api.Controllers
                     AttackBonus = a.AttackBonus,
                     Damage = a.Damage
                 }).ToList(),
+                Skills = character.Skills.OrderBy(s => s.Skill)
+                    .Select(s => new CharacterSkillDto
+                    {
+                        Skill = s.Skill,
+                        Ability = s.Ability,
+                        IsProficient = s.IsProficient,
+                        IsExpertise = s.IsExpertise,
+                        MiscBonus = s.MiscBonus
+                    }).ToList()
             });
         }
 
@@ -193,11 +202,14 @@ namespace DnDCampaignManager.Api.Controllers
             character.HitPointCurrent = update.HitPointCurrent;
             character.HitPointTemporary = update.HitPointTemporary;
             character.Inspiration = update.Inspiration;
-            character.HitDiceDie = update.HitDiceDie;
-            character.HitDiceTotal = update.HitDiceTotal;
-            character.HitDiceRemaining = update.HitDiceRemaining;
-            character.DeathSaveSuccesses = update.DeathSaveSuccesses;
-            character.DeathSaveFailures = update.DeathSaveFailures;
+
+            if (update.HitDice is not null)
+            {
+                character.HitDiceDie = update.HitDice.Die;
+                character.HitDiceTotal = update.HitDice.Total;
+                character.HitDiceRemaining = update.HitDice.Remaining;
+            }
+
             if (update.Attacks != null)
             {
                 character.Attacks.Clear();
@@ -307,9 +319,7 @@ namespace DnDCampaignManager.Api.Controllers
                 HitPointCurrent = character.HitPointCurrent,
                 HitPointTemporary = character.HitPointTemporary,
                 Inspiration = character.Inspiration,
-                HitDiceDie = character.HitDiceDie ?? string.Empty,
-                HitDiceTotal = character.HitDiceTotal ?? 0,
-                HitDiceRemaining = character.HitDiceRemaining ?? 0,
+                HitDice = new HitDiceDto(character.HitDiceDie ?? string.Empty, character.HitDiceTotal ?? 0, character.HitDiceRemaining ?? 0),
                 Attacks = character.Attacks.Select(a => new CharacterAttackDto
                 {
                     Id = a.Id,

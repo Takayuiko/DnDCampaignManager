@@ -36,13 +36,7 @@ namespace DnDCampaignManager.Api.DTOs
         public bool Inspiration { get; set; }
 
         // Hit Dice
-        public string HitDiceDie { get; set; } = "d8";
-        public int HitDiceTotal { get; set; } = 1;
-        public int HitDiceRemaining { get; set; } = 1;
-
-        // Death Saves
-        public int DeathSaveSuccesses { get; set; }
-        public int DeathSaveFailures { get; set; }
+        public HitDiceDto HitDice { get; set; } = new HitDiceDto("d8", 1 , 1);
 
         // Attacks and Skills
         public List<CharacterAttackDto> Attacks { get; set; } = new();

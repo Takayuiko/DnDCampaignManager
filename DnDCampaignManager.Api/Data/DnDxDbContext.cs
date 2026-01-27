@@ -15,7 +15,8 @@ namespace DnDCampingManager.Api.Data
         public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
         public DbSet<CampaignPlayer> CampaignPlayer => Set<CampaignPlayer>();
         public DbSet<CharacterSkill> CharacterSkills => Set<CharacterSkill>();
-        public DbSet<CharacterAttack> CharacterAttacks { get; set; } = null!;
+        public DbSet<CharacterAttack> CharacterAttacks => Set<CharacterAttack>();
+        public DbSet<CharacterClassOption> CharacterClassOptions => Set<CharacterClassOption>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -83,6 +84,22 @@ namespace DnDCampingManager.Api.Data
             modelBuilder.Entity<CharacterAttack>()
                 .Property(a => a.Damage)
                 .HasMaxLength(200);
+
+            modelBuilder.Entity<CharacterClassOption>()
+                .HasIndex(c => new { c.UserId, c.NormalizedName, c.CampaignId })
+                .IsUnique();
+
+            modelBuilder.Entity<CharacterClassOption>()
+                .HasOne(x => x.Campaign)
+                .WithMany()
+                .HasForeignKey(x => x.CampaignId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<CharacterClassOption>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         }
     }
 }

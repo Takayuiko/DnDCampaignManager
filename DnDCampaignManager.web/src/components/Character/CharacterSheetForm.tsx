@@ -1,6 +1,9 @@
 import FormCard from "../UI/FormCard";
 import Button from "../UI/Button";
 import ErrorPanel from "../UI/ErrorPanel";
+import { abilityModUtil, formatModUtil } from "../../Utils/dnd";
+import React, { useEffect, useMemo, useState } from "react";
+import { addCharacterClass, getCharacterClass } from "../../api/campaignApi";
 
 type SkillType =
     | "Acrobatics"
@@ -30,14 +33,6 @@ type AbilityType =
     | "Wisdom"
     | "Charisma";
 
-type AbilityKeyLower =
-    | "strength"
-    | "dexterity"
-    | "constitution"
-    | "intelligence"
-    | "wisdom"
-    | "charisma";
-
 export type CharacterSkill = {
     skill: SkillType;
     ability: AbilityType;
@@ -51,21 +46,28 @@ export type SavingThrow = {
     miscBonus: number;
 };
 
+export type CharacterClassOption = {
+    id: number;
+    name: string;
+    isCustom: boolean;
+};
+
 type HitDice = {
-    die: string;          // e.g. "d8"
-    total: number;        // max hit dice (usually = level)
-    remaining: number;    // spent during short rests
+    die: string; 
+    total: number; 
+    remaining: number; 
 };
 
 type Attack = {
-    id?: number | null; 
+    id?: number | null;
     clientId: string;
-    name: string;         
-    attackBonus: number;  
-    damage: string;       
+    name: string;
+    attackBonus: number;
+    damage: string;
 };
 
 export type CharacterForm = {
+    campaignId: number;
     // Identity
     name: string;
     class: string;
@@ -105,12 +107,6 @@ export type CharacterForm = {
         charisma: SavingThrow;
     };
 
-    // Death saves
-    deathSaves: {
-        successes: number; 
-        failures: number;  
-    };
-
     hitDice: HitDice;
     attacks: Attack[];
     skills: CharacterSkill[];
@@ -132,20 +128,41 @@ type Props = {
     error?: string | null;
 };
 
+const CLASS_OPTIONS = [
+    "Barbarian",
+    "Bard",
+    "Cleric",
+    "Druid",
+    "Fighter",
+    "Monk",
+    "Paladin",
+    "Ranger",
+    "Rogue",
+    "Sorcerer",
+    "Warlock",
+    "Wizard",
+    "Artificer",
+] as const;
+
 export default function CharacterSheetForm({
     title,
     subtitle,
-    topRight,
     form,
     setForm,
     onCancel,
     onSubmit,
     submitLabel,
     submitting,
-    error
+    error,
 }: Props) {
+    // --- Shared styling helpers (keeps things consistent) ---
+    const sectionClass =
+        "bg-stone-50 border border-stone-300 rounded-xl p-4";
+    const sectionTitleClass =
+        "text-lg font-semibold text-stone-700 mb-4";
+
     const handleChange = (
-        e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+        e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
     ) => {
         const { name, value } = e.target;
         const isNumber =
@@ -172,37 +189,53 @@ export default function CharacterSheetForm({
     const proficiencyFromLevel = (level: number) =>
         2 + Math.floor((Math.max(1, level) - 1) / 4);
 
-    const abilityMod = (score: number) => Math.floor((score - 10) / 2);
+    const abilityMod = (score: number) => abilityModUtil(score);
+    const formatMod = (n: number) => formatModUtil(n);
 
     const abilityScoreFor = (ability: AbilityType) => {
         switch (ability) {
-            case "Strength": return form.strength;
-            case "Dexterity": return form.dexterity;
-            case "Constitution": return form.constitution;
-            case "Intelligence": return form.intelligence;
-            case "Wisdom": return form.wisdom;
-            case "Charisma": return form.charisma;
+            case "Strength":
+                return form.strength;
+            case "Dexterity":
+                return form.dexterity;
+            case "Constitution":
+                return form.constitution;
+            case "Intelligence":
+                return form.intelligence;
+            case "Wisdom":
+                return form.wisdom;
+            case "Charisma":
+                return form.charisma;
         }
     };
 
-    const savingThrowTotal = (key: keyof CharacterForm["savingThrows"], f: CharacterForm) => {
-        const pb = proficiencyFromLevel(f.level);
-        const mod = abilityMod(abilityScoreForKey(key));
-        const st = f.savingThrows?.[key] ?? { isProficient: false, miscBonus: 0 };
-        return mod + (st.isProficient ? pb : 0) + (st.miscBonus ?? 0);
-    };
+    const SAVING_THROW_ROWS = [
+        { key: "strength", label: "STR" },
+        { key: "dexterity", label: "DEX" },
+        { key: "constitution", label: "CON" },
+        { key: "intelligence", label: "INT" },
+        { key: "wisdom", label: "WIS" },
+        { key: "charisma", label: "CHA" },
+    ] as const;
 
-    const passivePerception = (form: any) => {
-        const pb = proficiencyFromLevel(form.level);
-        const wisMod = abilityMod(form.wisdom);
-        const perception = form.skills?.find((s: any) => String(s.skill) === "Perception");
+    type SavingThrowKey = typeof SAVING_THROW_ROWS[number]["key"];
+
+    const savingThrowTotal = (key: SavingThrowKey, f: CharacterForm) => {
+        const pb = proficiencyFromLevel(f.level);
+        const mod = abilityMod(f[key]); // key is one of the ability keys
+        const st = f.savingThrows[key] ?? { isProficient: false, miscBonus: 0 };
+        return mod + (st.isProficient ? pb : 0) + (st.miscBonus ?? 0);
+    }; 
+
+    const passivePerception = (f: CharacterForm) => {
+        const pb = proficiencyFromLevel(f.level);
+        const wisMod = abilityMod(f.wisdom);
+        const perception = f.skills?.find((s) => String(s.skill) === "Perception");
         const prof = perception?.isProficient ? pb : 0;
         const exp = perception?.isExpertise ? pb : 0;
         const misc = perception?.miscBonus ?? 0;
         return 10 + wisMod + prof + exp + misc;
     };
-
-    const formatMod = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
 
     const calcSkillMod = (sk: CharacterSkill) => {
         const pb = proficiencyFromLevel(form.level);
@@ -213,17 +246,105 @@ export default function CharacterSheetForm({
         return mod + prof + exp + misc;
     };
 
+    // --- View toggle (true = read view, false = edit view) ---
+    const [isReadView, setIsReadView] = useState(false);
 
-    const abilityScoreForKey = (key: AbilityKeyLower) => form[key];
+    const abilities = [
+        { key: "Strength", score: form.strength },
+        { key: "Dexterity", score: form.dexterity },
+        { key: "Constitution", score: form.constitution },
+        { key: "Intelligence", score: form.intelligence },
+        { key: "Wisdom", score: form.wisdom },
+        { key: "Charisma", score: form.charisma },
+    ];
 
-    return (
-        <FormCard title={title} subtitle={subtitle} topRight={topRight}>
+    const pb = proficiencyFromLevel(form.level);
+
+    // --- Campaign-scoped class dropdown ---
+    const [classOptions, setClassOptions] = useState<string[]>([]);
+    const [classLoading, setClassLoading] = useState(false);
+    const [classError, setClassError] = useState<string | null>(null);
+
+    const [addingClass, setAddingClass] = useState(false);
+    const [newClassName, setNewClassName] = useState("");
+
+    async function loadClassOptions(campaignId: number) {
+        setClassLoading(true);
+        setClassError(null);
+        try {
+            const res = await getCharacterClass(campaignId);
+            const custom = res.data.map((x: any) => x.name as string);
+
+            const merged = [...CLASS_OPTIONS, ...custom]
+                .filter(Boolean)
+                .reduce<string[]>((acc, name) => {
+                    const exists = acc.some(x => x.toLowerCase() === name.toLowerCase());
+                    if (!exists) acc.push(name);
+                    return acc;
+                }, []);
+
+            setClassOptions(merged);
+        } catch {
+            setClassError("Could not load classes for this campaign.");
+        } finally {
+            setClassLoading(false);
+        }
+    }
+
+    useEffect(() => {
+        if (!form.campaignId) return;
+        loadClassOptions(form.campaignId);
+    }, [form.campaignId]);
+
+    const classNames = useMemo(
+        () => [...new Set(classOptions)].sort((a, b) => a.localeCompare(b)),
+        [classOptions]
+    );
+
+    const isOfficialClass = (name: string) =>
+        CLASS_OPTIONS.some((x) => x.toLowerCase() === name.toLowerCase());
+
+    async function handleAddClass() {
+        const name = newClassName.trim();
+        if (!name || !form.campaignId) return;
+
+        try {
+            setClassError(null);
+
+            const res = await addCharacterClass(form.campaignId, { name });
+            const addedName = res.data.name as string;
+
+            setClassOptions(prev => {
+                if (prev.some(x => x.toLowerCase() === addedName.toLowerCase())) return prev;
+                return [...prev, addedName].sort((a, b) => a.localeCompare(b));
+            });
+
+            setForm(prev => ({ ...prev, class: addedName }));
+            setAddingClass(false);
+            setNewClassName("");
+        } catch (err: any) {
+            const msg = err?.response?.data;
+            setClassError(typeof msg === "string" ? msg : "Could not add class.");
+        }
+    }
+
+    // -------------------- EDIT VIEW --------------------
+    const EditView = (
+        <FormCard
+            title={title}
+            subtitle={subtitle}
+            topRight={
+                <Button type="button" variant="ghost" onClick={() => setIsReadView(true)}>
+                    Read View
+                </Button>
+            }
+        >
             {error && <ErrorPanel message={error} />}
 
             <form onSubmit={onSubmit} className="space-y-6">
                 {/* Identity */}
-                <section className="bg-stone-50 border border-stone-300 rounded-lg p-4">
-                    <h2 className="text-lg font-semibold text-stone-700 mb-4">Identity</h2>
+                <section className={sectionClass}>
+                    <h2 className={sectionTitleClass}>Identity</h2>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="md:col-span-2">
@@ -254,19 +375,83 @@ export default function CharacterSheetForm({
                             />
                         </div>
 
+                        {/* Class + Homebrew */}
                         <div>
-                            <label className="block text-sm font-semibold text-stone-700">
-                                Class
-                            </label>
-                            <input
+                            <div className="flex items-center justify-between">
+                                <label className="block text-sm font-semibold text-stone-700">
+                                    Class
+                                </label>
+
+                                <button
+                                    type="button"
+                                    className="text-xs font-semibold text-emerald-800 hover:underline"
+                                    onClick={() => setAddingClass((v) => !v)}
+                                >
+                                    {addingClass ? "Close" : "Add homebrew"}
+                                </button>
+                            </div>
+
+                            <select
                                 name="class"
                                 value={form.class}
                                 onChange={handleChange}
                                 className="w-full border border-stone-400 rounded-md p-2 bg-white"
                                 required
-                            />
+                                disabled={classLoading}
+                            >
+                                <option value="" disabled>
+                                    {classLoading ? "Summoning classes..." : "Choose a class"}
+                                </option>
+
+                                <optgroup label="Official">
+                                    {classNames
+                                        .filter((c) => isOfficialClass(c))
+                                        .map((cls) => (
+                                            <option key={cls} value={cls}>
+                                                {cls}
+                                            </option>
+                                        ))}
+                                </optgroup>
+
+                                <optgroup label="Homebrew">
+                                    {classNames
+                                        .filter((c) => !isOfficialClass(c))
+                                        .map((cls) => (
+                                            <option key={cls} value={cls}>
+                                                {cls}
+                                            </option>
+                                        ))}
+                                </optgroup>
+                            </select>
+
+                            {classError && <p className="mt-1 text-xs text-red-700">{classError}</p>}
+
+                            {addingClass && (
+                                <div className="mt-2 rounded-lg border border-stone-300 bg-amber-50 p-3">
+                                    <p className="text-xs text-stone-600 mb-2">
+                                        Add a homebrew class to this campaign’s roster.
+                                    </p>
+
+                                    <div className="flex gap-2">
+                                        <input
+                                            value={newClassName}
+                                            onChange={(e) => setNewClassName(e.target.value)}
+                                            placeholder="e.g. Blood Hunter"
+                                            className="flex-1 border border-stone-400 rounded-md p-2 bg-white"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={handleAddClass}
+                                            className="px-3 py-2 text-sm font-semibold rounded-lg bg-emerald-700 text-white hover:bg-emerald-600"
+                                        >
+                                            Inscribe
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
+                        {/* Race */}
                         <div>
                             <label className="block text-sm font-semibold text-stone-700">
                                 Race
@@ -280,6 +465,7 @@ export default function CharacterSheetForm({
                             />
                         </div>
 
+                        {/* Background */}
                         <div>
                             <label className="block text-sm font-semibold text-stone-700">
                                 Background
@@ -292,6 +478,7 @@ export default function CharacterSheetForm({
                             />
                         </div>
 
+                        {/* Alignment */}
                         <div>
                             <label className="block text-sm font-semibold text-stone-700">
                                 Alignment
@@ -304,10 +491,9 @@ export default function CharacterSheetForm({
                             />
                         </div>
 
+                        {/* XP */}
                         <div>
-                            <label className="block text-sm font-semibold text-stone-700">
-                                XP
-                            </label>
+                            <label className="block text-sm font-semibold text-stone-700">XP</label>
                             <input
                                 type="number"
                                 name="experiencePoints"
@@ -322,10 +508,8 @@ export default function CharacterSheetForm({
 
                 {/* Abilities + Skills */}
                 <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="bg-stone-50 border border-stone-300 rounded-lg p-4">
-                        <h2 className="text-lg font-semibold text-stone-700 mb-4">
-                            Ability Scores
-                        </h2>
+                    <div className={sectionClass}>
+                        <h2 className={sectionTitleClass}>Ability Scores</h2>
 
                         {(
                             [
@@ -355,7 +539,7 @@ export default function CharacterSheetForm({
                         ))}
                     </div>
 
-                    <div className="bg-stone-50 border border-stone-300 rounded-lg p-4 md:col-span-2">
+                    <div className={`${sectionClass} md:col-span-2`}>
                         <div className="flex items-center justify-between mb-4">
                             <h2 className="text-lg font-semibold text-stone-700">Skills</h2>
 
@@ -456,89 +640,71 @@ export default function CharacterSheetForm({
                 </section>
 
                 {/* Saving throws */}
-                <section className="bg-stone-50 border border-stone-300 rounded-lg p-4">
-                    <h2 className="text-lg font-semibold text-stone-700 mb-4">Saving Throws</h2>
+                {SAVING_THROW_ROWS.map(({ key, label }) => {
+                    const total = savingThrowTotal(key, form);
+                    const st = form.savingThrows[key] ?? { isProficient: false, miscBonus: 0 };
 
-                    <div className="space-y-2">
-                        {(
-                            [
-                                ["strength", "STR"],
-                                ["dexterity", "DEX"],
-                                ["constitution", "CON"],
-                                ["intelligence", "INT"],
-                                ["wisdom", "WIS"],
-                                ["charisma", "CHA"],
-                            ] as const
-                        ).map(([key, label]) => {
-                            const total = savingThrowTotal(key, form);
-                            const st = form.savingThrows?.[key] ?? { isProficient: false, miscBonus: 0 };
+                    return (
+                        <div
+                            key={key}
+                            className="flex items-center justify-between border border-stone-200 rounded-md bg-white px-3 py-2"
+                        >
+                            <div className="min-w-0">
+                                <div className="font-semibold text-stone-800">{label}</div>
+                                <div className="text-xs text-stone-500">Saving Throw</div>
+                            </div>
 
-                            return (
-                                <div
-                                    key={key}
-                                    className="flex items-center justify-between border border-stone-200 rounded-md bg-white px-3 py-2"
-                                >
-                                    <div className="min-w-0">
-                                        <div className="font-semibold text-stone-800">{label}</div>
-                                        <div className="text-xs text-stone-500">Saving Throw</div>
-                                    </div>
-
-                                    <div className="flex items-center gap-3">
-                                        {/* computed value */}
-                                        <div className="w-10 text-center font-bold text-stone-800">
-                                            {formatMod(total)}
-                                        </div>
-
-                                        {/* proficient */}
-                                        <label className="text-xs text-stone-600 flex items-center gap-1">
-                                            Prof
-                                            <input
-                                                type="checkbox"
-                                                checked={!!st.isProficient}
-                                                onChange={e =>
-                                                    setForm(prev => ({
-                                                        ...prev,
-                                                        savingThrows: {
-                                                            ...prev.savingThrows,
-                                                            [key]: {
-                                                                ...prev.savingThrows[key],
-                                                                isProficient: e.target.checked,
-                                                            },
-                                                        },
-                                                    }))
-                                                }
-                                            />
-                                        </label>
-
-                                        {/* misc */}
-                                        <input
-                                            type="number"
-                                            value={st.miscBonus ?? 0}
-                                            onChange={e =>
-                                                setForm(prev => ({
-                                                    ...prev,
-                                                    savingThrows: {
-                                                        ...prev.savingThrows,
-                                                        [key]: {
-                                                            ...prev.savingThrows[key],
-                                                            miscBonus: Number(e.target.value),
-                                                        },
-                                                    },
-                                                }))
-                                            }
-                                            className="w-16 text-center border border-stone-300 rounded p-1 text-sm"
-                                            title="Misc bonus"
-                                        />
-                                    </div>
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 text-center font-bold text-stone-800">
+                                    {formatMod(total)}
                                 </div>
-                            );
-                        })}
-                    </div>
-                </section>
+
+                                <label className="text-xs text-stone-600 flex items-center gap-1">
+                                    Prof
+                                    <input
+                                        type="checkbox"
+                                        checked={!!st.isProficient}
+                                        onChange={(e) =>
+                                            setForm((prev) => ({
+                                                ...prev,
+                                                savingThrows: {
+                                                    ...prev.savingThrows,
+                                                    [key]: {
+                                                        ...prev.savingThrows[key],
+                                                        isProficient: e.target.checked,
+                                                    },
+                                                },
+                                            }))
+                                        }
+                                    />
+                                </label>
+
+                                <input
+                                    type="number"
+                                    value={st.miscBonus ?? 0}
+                                    onChange={(e) =>
+                                        setForm((prev) => ({
+                                            ...prev,
+                                            savingThrows: {
+                                                ...prev.savingThrows,
+                                                [key]: {
+                                                    ...prev.savingThrows[key],
+                                                    miscBonus: Number(e.target.value),
+                                                },
+                                            },
+                                        }))
+                                    }
+                                    className="w-16 text-center border border-stone-300 rounded p-1 text-sm"
+                                    title="Misc bonus"
+                                />
+                            </div>
+                        </div>
+                    );
+                })}
 
                 {/* Combat + HP */}
-                <section className="bg-stone-50 border border-stone-300 rounded-lg p-4">
-                    <h2 className="text-lg font-semibold text-stone-700 mb-4">Combat</h2>
+                <section className={sectionClass}>
+                    <h2 className={sectionTitleClass}>Combat</h2>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <div>
@@ -635,19 +801,18 @@ export default function CharacterSheetForm({
                 </section>
 
                 {/* Hit Dice */}
-                <section className="bg-stone-50 border border-stone-300 rounded-lg p-4">
-                    <h2 className="text-lg font-semibold text-stone-700 mb-4">Hit Dice</h2>
+                <section className={sectionClass}>
+                    <h2 className={sectionTitleClass}>Hit Dice</h2>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <div>
                             <label className="block text-sm font-semibold text-stone-700">Die</label>
                             <input
-                                name="hitDice.die"
                                 value={form.hitDice.die}
-                                onChange={e =>
-                                    setForm(prev => ({
+                                onChange={(e) =>
+                                    setForm((prev) => ({
                                         ...prev,
-                                        hitDice: { ...prev.hitDice, die: e.target.value }
+                                        hitDice: { ...prev.hitDice, die: e.target.value },
                                     }))
                                 }
                                 className="w-full border border-stone-400 rounded-md p-2 bg-white"
@@ -661,15 +826,15 @@ export default function CharacterSheetForm({
                                 type="number"
                                 min={0}
                                 value={form.hitDice.total}
-                                onChange={e => {
+                                onChange={(e) => {
                                     const v = Number(e.target.value);
-                                    setForm(prev => ({
+                                    setForm((prev) => ({
                                         ...prev,
                                         hitDice: {
                                             ...prev.hitDice,
                                             total: v,
                                             remaining: Math.min(prev.hitDice.remaining, v),
-                                        }
+                                        },
                                     }));
                                 }}
                                 className="w-full border border-stone-400 rounded-md p-2 bg-white"
@@ -683,14 +848,14 @@ export default function CharacterSheetForm({
                                 min={0}
                                 max={form.hitDice.total}
                                 value={form.hitDice.remaining}
-                                onChange={e => {
+                                onChange={(e) => {
                                     const v = Number(e.target.value);
-                                    setForm(prev => ({
+                                    setForm((prev) => ({
                                         ...prev,
                                         hitDice: {
                                             ...prev.hitDice,
-                                            remaining: Math.max(0, Math.min(v, prev.hitDice.total))
-                                        }
+                                            remaining: Math.max(0, Math.min(v, prev.hitDice.total)),
+                                        },
                                     }));
                                 }}
                                 className="w-full border border-stone-400 rounded-md p-2 bg-white"
@@ -703,65 +868,11 @@ export default function CharacterSheetForm({
                     </p>
                 </section>
 
-                {/* Death Saves */}
-                <section className="bg-stone-50 border border-stone-300 rounded-lg p-4">
-                    <h2 className="text-lg font-semibold text-stone-700 mb-4">Death Saves</h2>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {/* Successes */}
-                        <div className="border border-stone-200 rounded-md bg-white px-3 py-2">
-                            <div className="font-semibold text-stone-800 mb-2">Successes</div>
-                            <div className="flex gap-2">
-                                {[0, 1, 2].map(i => (
-                                    <input
-                                        key={i}
-                                        type="checkbox"
-                                        checked={(form.deathSaves?.successes ?? 0) > i}
-                                        onChange={() => {
-                                            const current = form.deathSaves?.successes ?? 0;
-                                            const next = current > i ? i : i + 1;
-                                            setForm(prev => ({
-                                                ...prev,
-                                                deathSaves: { ...prev.deathSaves, successes: next },
-                                            }));
-                                        }}
-                                        className="h-5 w-5"
-                                    />
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Failures */}
-                        <div className="border border-stone-200 rounded-md bg-white px-3 py-2">
-                            <div className="font-semibold text-stone-800 mb-2">Failures</div>
-                            <div className="flex gap-2">
-                                {[0, 1, 2].map(i => (
-                                    <input
-                                        key={i}
-                                        type="checkbox"
-                                        checked={(form.deathSaves?.failures ?? 0) > i}
-                                        onChange={() => {
-                                            const current = form.deathSaves?.failures ?? 0;
-                                            const next = current > i ? i : i + 1;
-                                            setForm(prev => ({
-                                                ...prev,
-                                                deathSaves: { ...prev.deathSaves, failures: next },
-                                            }));
-                                        }}
-                                        className="h-5 w-5"
-                                    />
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </section>
-
-                {/* Misc */}
-                <section className="bg-stone-50 border border-stone-300 rounded-lg p-4">
-                    <h2 className="text-lg font-semibold text-stone-700 mb-4">Core</h2>
+                {/* Core */}
+                <section className={sectionClass}>
+                    <h2 className={sectionTitleClass}>Core</h2>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        {/* Inspiration */}
                         <div className="flex items-center justify-between border border-stone-200 rounded-md bg-white px-3 py-2">
                             <div>
                                 <div className="font-semibold text-stone-800">Inspiration</div>
@@ -770,14 +881,13 @@ export default function CharacterSheetForm({
                             <input
                                 type="checkbox"
                                 checked={!!form.inspiration}
-                                onChange={e =>
-                                    setForm(prev => ({ ...prev, inspiration: e.target.checked }))
+                                onChange={(e) =>
+                                    setForm((prev) => ({ ...prev, inspiration: e.target.checked }))
                                 }
                                 className="h-5 w-5"
                             />
                         </div>
 
-                        {/* Proficiency Bonus */}
                         <div className="flex items-center justify-between border border-stone-200 rounded-md bg-white px-3 py-2">
                             <div>
                                 <div className="font-semibold text-stone-800">Proficiency Bonus</div>
@@ -788,39 +898,36 @@ export default function CharacterSheetForm({
                             </div>
                         </div>
 
-                        {/* Passive Perception */}
                         <div className="flex items-center justify-between border border-stone-200 rounded-md bg-white px-3 py-2">
                             <div>
                                 <div className="font-semibold text-stone-800">Passive Perception</div>
                                 <div className="text-xs text-stone-500">10 + Perception mod</div>
                             </div>
-                            <div className="font-bold text-stone-800">
-                                {passivePerception(form)}
-                            </div>
+                            <div className="font-bold text-stone-800">{passivePerception(form)}</div>
                         </div>
                     </div>
                 </section>
 
-                {/* Attacks & Spellcasting */}
-                <section className="bg-stone-50 border border-stone-300 rounded-lg p-4">
+                {/* Attacks */}
+                <section className={sectionClass}>
                     <div className="flex items-center justify-between mb-4">
                         <h2 className="text-lg font-semibold text-stone-700">Attacks & Spellcasting</h2>
 
                         <button
                             type="button"
                             onClick={() =>
-                                setForm(prev => ({
+                                setForm((prev) => ({
                                     ...prev,
                                     attacks: [
                                         ...(prev.attacks ?? []),
                                         {
-                                            id: null, // 👈 new items have no server id yet
-                                            clientId: crypto.randomUUID(), // 👈 UI-only unique key
+                                            id: null,
+                                            clientId: crypto.randomUUID(),
                                             name: "",
                                             attackBonus: 0,
-                                            damage: ""
-                                        }
-                                    ]
+                                            damage: "",
+                                        },
+                                    ],
                                 }))
                             }
                             className="px-3 py-1.5 rounded-md bg-stone-900 text-amber-50 text-sm font-semibold hover:bg-stone-800"
@@ -835,16 +942,16 @@ export default function CharacterSheetForm({
                         <div className="space-y-3">
                             {form.attacks!.map((a, idx) => (
                                 <div
-                                    key={a.clientId} // 👈 stable unique key
+                                    key={a.clientId}
                                     className="grid grid-cols-1 md:grid-cols-12 gap-3 border border-stone-200 rounded-md bg-white p-3"
                                 >
                                     <div className="md:col-span-5">
                                         <label className="block text-xs font-semibold text-stone-600">Name</label>
                                         <input
                                             value={a.name}
-                                            onChange={e => {
+                                            onChange={(e) => {
                                                 const v = e.target.value;
-                                                setForm(prev => {
+                                                setForm((prev) => {
                                                     const copy = [...(prev.attacks ?? [])];
                                                     copy[idx] = { ...copy[idx], name: v };
                                                     return { ...prev, attacks: copy };
@@ -860,9 +967,9 @@ export default function CharacterSheetForm({
                                         <input
                                             type="number"
                                             value={a.attackBonus}
-                                            onChange={e => {
+                                            onChange={(e) => {
                                                 const v = Number(e.target.value);
-                                                setForm(prev => {
+                                                setForm((prev) => {
                                                     const copy = [...(prev.attacks ?? [])];
                                                     copy[idx] = { ...copy[idx], attackBonus: v };
                                                     return { ...prev, attacks: copy };
@@ -876,9 +983,9 @@ export default function CharacterSheetForm({
                                         <label className="block text-xs font-semibold text-stone-600">Damage/Type</label>
                                         <input
                                             value={a.damage}
-                                            onChange={e => {
+                                            onChange={(e) => {
                                                 const v = e.target.value;
-                                                setForm(prev => {
+                                                setForm((prev) => {
                                                     const copy = [...(prev.attacks ?? [])];
                                                     copy[idx] = { ...copy[idx], damage: v };
                                                     return { ...prev, attacks: copy };
@@ -894,9 +1001,11 @@ export default function CharacterSheetForm({
                                             type="button"
                                             onClick={() => {
                                                 if (confirm("Remove this attack?")) {
-                                                    setForm(prev => ({
+                                                    setForm((prev) => ({
                                                         ...prev,
-                                                        attacks: (prev.attacks ?? []).filter(x => x.clientId !== a.clientId)
+                                                        attacks: (prev.attacks ?? []).filter(
+                                                            (x) => x.clientId !== a.clientId
+                                                        ),
                                                     }));
                                                 }
                                             }}
@@ -915,10 +1024,14 @@ export default function CharacterSheetForm({
                     </p>
                 </section>
 
-
                 {/* Actions */}
                 <div className="flex justify-end gap-3">
-                    <Button type="button" variant="subtle" onClick={onCancel} disabled={submitting}>
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={onCancel}
+                        disabled={submitting}
+                    >
                         Cancel
                     </Button>
 
@@ -929,4 +1042,251 @@ export default function CharacterSheetForm({
             </form>
         </FormCard>
     );
+
+    // -------------------- READ VIEW --------------------
+    const ReadView = (
+        <FormCard
+            title={title}
+            subtitle={subtitle}
+            topRight={
+                <Button type="button" variant="ghost" onClick={() => setIsReadView(false)}>
+                    Edit
+                </Button>
+            }
+        >
+            {error && <ErrorPanel message={error} />}
+
+            <section className="rounded-2xl border border-stone-200 bg-gradient-to-b from-amber-50 to-stone-50 p-5 shadow-sm">
+                {/* Header */}
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="space-y-1">
+                        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                            <h2 className="text-3xl font-extrabold tracking-tight text-stone-900">
+                                {form.name}
+                            </h2>
+                            <span className="inline-flex items-center rounded-full border border-stone-200 bg-white/70 px-3 py-1 text-sm font-semibold text-stone-700">
+                                Lv {form.level}
+                            </span>
+                            <span className="inline-flex items-center rounded-full border border-stone-200 bg-white/70 px-3 py-1 text-sm font-semibold text-stone-700">
+                                {form.class}
+                                {!isOfficialClass(form.class) && (
+                                    <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800 border border-amber-200">
+                                        Homebrew
+                                    </span>
+                                )}
+                            </span>
+                        </div>
+
+                        <div className="text-sm text-stone-700">
+                            <span className="font-semibold">{form.race}</span> •{" "}
+                            <span className="text-stone-600">{form.alignment}</span>
+                        </div>
+
+                        {(form.background || form.experiencePoints !== undefined) && (
+                            <div className="text-xs text-stone-600">
+                                <span className="font-semibold">Background:</span>{" "}
+                                {form.background || "—"}{" "}
+                                <span className="mx-2 text-stone-300">|</span>
+                                <span className="font-semibold">XP:</span> {form.experiencePoints ?? 0}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center rounded-full border border-stone-200 bg-white/80 px-3 py-1 text-xs font-bold text-stone-700">
+                            PB {formatMod(pb)}
+                        </span>
+                        <span className="inline-flex items-center rounded-full border border-stone-200 bg-white/80 px-3 py-1 text-xs font-bold text-stone-700">
+                            Passive Perception {passivePerception(form)}
+                        </span>
+                        <span className="inline-flex items-center rounded-full border border-stone-200 bg-white/80 px-3 py-1 text-xs font-bold text-stone-700">
+                            Inspiration {form.inspiration ? "⭐" : "—"}
+                        </span>
+                    </div>
+                </div>
+
+                <div className="my-5 h-px bg-stone-200" />
+
+                {/* Quick stats */}
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+                    <div className="rounded-xl border border-stone-200 bg-white/70 p-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">
+                            Armor Class
+                        </div>
+                        <div className="mt-1 text-2xl font-extrabold text-stone-900">
+                            {form.armorClass}
+                        </div>
+                    </div>
+
+                    <div className="rounded-xl border border-stone-200 bg-white/70 p-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">
+                            Initiative
+                        </div>
+                        <div className="mt-1 text-2xl font-extrabold text-stone-900">
+                            {formatMod(form.initiative)}
+                        </div>
+                    </div>
+
+                    <div className="rounded-xl border border-stone-200 bg-white/70 p-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">
+                            Speed
+                        </div>
+                        <div className="mt-1 text-2xl font-extrabold text-stone-900">{form.speed}</div>
+                    </div>
+
+                    <div className="rounded-xl border border-stone-200 bg-white/70 p-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">
+                            Hit Dice
+                        </div>
+                        <div className="mt-1 text-lg font-extrabold text-stone-900">
+                            {form.hitDice?.remaining ?? 0}/{form.hitDice?.total ?? 0}{" "}
+                            <span className="text-sm font-semibold text-stone-600">
+                                {form.hitDice?.die ? `(${form.hitDice.die})` : ""}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="col-span-2 rounded-xl border border-stone-200 bg-white/70 p-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">
+                            Hit Points
+                        </div>
+                        <div className="mt-1 text-2xl font-extrabold text-stone-900">
+                            {form.hitPointCurrent}/{form.hitPointMax}
+                            {form.hitPointTemporary > 0 && (
+                                <span className="ml-2 text-sm font-semibold text-stone-600">
+                                    +{form.hitPointTemporary} temp
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Abilities */}
+                <div className="mt-6">
+                    <div className="mb-2 flex items-center justify-between">
+                        <div className="text-sm font-extrabold tracking-wide text-stone-900">
+                            Abilities
+                        </div>
+                        <div className="text-xs text-stone-600">(Score / Mod)</div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
+                        {abilities.map((a) => {
+                            const mod = abilityModUtil(a.score);
+                            return (
+                                <div
+                                    key={a.key}
+                                    className="rounded-xl border border-stone-200 bg-white/70 p-3 text-center"
+                                >
+                                    <div className="text-[11px] font-bold uppercase tracking-wide text-stone-500">
+                                        {a.key}
+                                    </div>
+                                    <div className="mt-1 text-xl font-extrabold text-stone-900">
+                                        {a.score}
+                                    </div>
+                                    <div className="text-sm font-semibold text-stone-700">
+                                        {formatModUtil(mod)}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Skills + Attacks */}
+                <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {/* Skills */}
+                    <div className="rounded-2xl border border-stone-200 bg-white/70 shadow-sm overflow-hidden">
+                        <div className="flex items-center justify-between border-b border-stone-200 px-4 py-3">
+                            <div className="text-sm font-extrabold text-stone-900">Skills</div>
+                            <div className="text-xs text-stone-600">PB {formatMod(pb)}</div>
+                        </div>
+
+                        {form.skills?.length ? (
+                            <ul className="divide-y divide-stone-200">
+                                {form.skills.map((s, idx) => {
+                                    const bonus = calcSkillMod(s);
+
+                                    return (
+                                        <li
+                                            key={`${s.skill}-${idx}`}
+                                            className="flex items-center justify-between px-4 py-2"
+                                        >
+                                            <div className="min-w-0">
+                                                <div className="truncate text-sm font-semibold text-stone-900">
+                                                    {prettySkill(String(s.skill))}
+                                                    <span className="ml-2 text-xs font-semibold text-stone-500">
+                                                        ({abilityAbbrev(s.ability)})
+                                                    </span>
+                                                </div>
+
+                                                <div className="mt-1 flex flex-wrap gap-2">
+                                                    {s.isProficient && (
+                                                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">
+                                                            PROF
+                                                        </span>
+                                                    )}
+                                                    {s.isExpertise && (
+                                                        <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold text-indigo-800">
+                                                            EXP
+                                                        </span>
+                                                    )}
+                                                    {(s.miscBonus ?? 0) !== 0 && (
+                                                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">
+                                                            {s.miscBonus! > 0 ? `+${s.miscBonus}` : s.miscBonus}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="ml-4 shrink-0 rounded-lg border border-stone-200 bg-white px-3 py-1 text-sm font-extrabold text-stone-900">
+                                                {formatMod(bonus)}
+                                            </div>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        ) : (
+                            <div className="px-4 py-4 text-sm text-stone-600">No skills yet.</div>
+                        )}
+                    </div>
+
+                    {/* Attacks */}
+                    <div className="rounded-2xl border border-stone-200 bg-white/70 shadow-sm overflow-hidden">
+                        <div className="flex items-center justify-between border-b border-stone-200 px-4 py-3">
+                            <div className="text-sm font-extrabold text-stone-900">Attacks</div>
+                            <div className="text-xs text-stone-600">Name / Bonus / Damage</div>
+                        </div>
+
+                        {form.attacks?.length ? (
+                            <ul className="divide-y divide-stone-200">
+                                {form.attacks.map((a, idx) => (
+                                    <li key={a.clientId ?? `${a.name}-${idx}`} className="px-4 py-3">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <div className="truncate text-sm font-semibold text-stone-900">
+                                                    {a.name || "—"}
+                                                </div>
+                                                <div className="mt-0.5 text-xs text-stone-600 truncate">
+                                                    {a.damage || "No damage text"}
+                                                </div>
+                                            </div>
+
+                                            <div className="shrink-0 rounded-lg border border-stone-200 bg-white px-3 py-1 text-sm font-extrabold text-stone-900">
+                                                {formatMod(a.attackBonus)}
+                                            </div>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : (
+                            <div className="px-4 py-4 text-sm text-stone-600">No attacks yet.</div>
+                        )}
+                    </div>
+                </div>
+            </section>
+        </FormCard>
+    );
+
+    return isReadView ? ReadView : EditView;
 }

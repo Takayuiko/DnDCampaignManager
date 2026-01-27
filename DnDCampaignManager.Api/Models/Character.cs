@@ -47,10 +47,6 @@ namespace DnDCampaignManager.Api.Models
         public int? HitDiceTotal { get; set; }
         public int? HitDiceRemaining { get; set; }
 
-        // Death Saves
-        public int DeathSaveSuccesses { get; set; }
-        public int DeathSaveFailures { get; set; }
-
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         // Attacks and Skills

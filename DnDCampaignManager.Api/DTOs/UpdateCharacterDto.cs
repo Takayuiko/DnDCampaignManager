@@ -23,11 +23,7 @@
         int HitPointCurrent,
         int HitPointTemporary,
         bool Inspiration,
-        string HitDiceDie,
-        int HitDiceTotal,
-        int HitDiceRemaining,
-        int DeathSaveSuccesses,
-        int DeathSaveFailures,
+        HitDiceDto? HitDice,
         List<CharacterAttackDto>? Attacks,
         List<CharacterSkillDto> Skills
     );

@@ -1,36 +1,36 @@
-import { useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { createCharacter } from "../api/campaignApi";
-import CharacterSheetForm, {
-    type CharacterForm,
-    type CharacterSkill,
-} from "../components/Character/CharacterSheetForm";
-import Button from "../components/UI/Button";
-import { extractApiError } from "../Utils/apiError";
+    import { useMemo, useState, useEffect } from "react";
+    import { useNavigate, useParams } from "react-router-dom";
+    import { createCharacter } from "../api/campaignApi";
+    import CharacterSheetForm, {
+        type CharacterForm,
+        type CharacterSkill,
+    } from "../components/Character/CharacterSheetForm";
+    import Button from "../components/UI/Button";
+    import { extractApiError } from "../Utils/apiError";
 
-const defaultSkills: CharacterSkill[] = [
-    { skill: "Acrobatics", ability: "Dexterity", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "AnimalHandling", ability: "Wisdom", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Arcana", ability: "Intelligence", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Athletics", ability: "Strength", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Deception", ability: "Charisma", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "History", ability: "Intelligence", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Insight", ability: "Wisdom", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Intimidation", ability: "Charisma", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Investigation", ability: "Intelligence", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Medicine", ability: "Wisdom", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Nature", ability: "Intelligence", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Perception", ability: "Wisdom", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Performance", ability: "Charisma", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Persuasion", ability: "Charisma", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Religion", ability: "Intelligence", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "SleightOfHand", ability: "Dexterity", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Stealth", ability: "Dexterity", isProficient: false, isExpertise: false, miscBonus: 0 },
-    { skill: "Survival", ability: "Wisdom", isProficient: false, isExpertise: false, miscBonus: 0 },
-];
+    const defaultSkills: CharacterSkill[] = [
+        { skill: "Acrobatics", ability: "Dexterity", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "AnimalHandling", ability: "Wisdom", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Arcana", ability: "Intelligence", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Athletics", ability: "Strength", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Deception", ability: "Charisma", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "History", ability: "Intelligence", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Insight", ability: "Wisdom", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Intimidation", ability: "Charisma", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Investigation", ability: "Intelligence", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Medicine", ability: "Wisdom", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Nature", ability: "Intelligence", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Perception", ability: "Wisdom", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Performance", ability: "Charisma", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Persuasion", ability: "Charisma", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Religion", ability: "Intelligence", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "SleightOfHand", ability: "Dexterity", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Stealth", ability: "Dexterity", isProficient: false, isExpertise: false, miscBonus: 0 },
+        { skill: "Survival", ability: "Wisdom", isProficient: false, isExpertise: false, miscBonus: 0 },
+    ];
 
 const emptyForm: CharacterForm = {
-    // Identity
+    campaignId: 0,
     name: "",
     class: "",
     race: "",
@@ -38,28 +38,19 @@ const emptyForm: CharacterForm = {
     background: "",
     alignment: "",
     experiencePoints: 0,
-
-    // Combat
     armorClass: 10,
     initiative: 0,
     speed: 30,
-
-    // HP
     hitPointMax: 1,
     hitPointCurrent: 1,
     hitPointTemporary: 0,
-
-    // Abilities
     strength: 10,
     dexterity: 10,
     constitution: 10,
     intelligence: 10,
     wisdom: 10,
     charisma: 10,
-
     inspiration: false,
-
-    // Saving Throws
     savingThrows: {
         strength: { isProficient: false, miscBonus: 0 },
         dexterity: { isProficient: false, miscBonus: 0 },
@@ -68,32 +59,23 @@ const emptyForm: CharacterForm = {
         wisdom: { isProficient: false, miscBonus: 0 },
         charisma: { isProficient: false, miscBonus: 0 },
     },
-
-    // Death Saves
-    deathSaves: {
-        successes: 0,
-        failures: 0,
-    },
-
-    // Temporal
-    hitDice: {
-        die: "d8",
-        total: 1,
-        remaining: 1
-    },
-
+    hitDice: { die: "d8", total: 1, remaining: 1 },
     attacks: [],
-
-    // Skills
     skills: defaultSkills,
 };
 
 export default function CreateCharacter() {
-    const { id } = useParams();
-    const campaignId = Number(id);
     const navigate = useNavigate();
+    const { campaignId } = useParams<{ campaignId: string }>();
 
-    const [form, setForm] = useState<CharacterForm>(emptyForm);
+    const campaignIdParam = Number(campaignId);
+    const hasValidCampaignId = Number.isFinite(campaignIdParam) && campaignIdParam > 0;
+
+    const [form, setForm] = useState<CharacterForm>(() => ({
+        ...emptyForm,
+        campaignId: hasValidCampaignId ? campaignIdParam : 0,
+    }));
+
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -106,14 +88,22 @@ export default function CreateCharacter() {
         [navigate]
     );
 
+    useEffect(() => {
+        if (!hasValidCampaignId) return;
+        setForm(prev => ({ ...prev, campaignId: campaignIdParam }));
+    }, [hasValidCampaignId, campaignIdParam]);
+
     const submit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!campaignId) return;
+        if (!hasValidCampaignId) {
+            setError("Invalid campaign id in URL.");
+            return;
+        }
 
         setError(null);
         setSubmitting(true);
         try {
-            await createCharacter(campaignId, form);
+            await createCharacter(campaignIdParam, form);
             navigate("/dashboard");
         } catch (err: any) {
             setError(extractApiError(err, "Failed to create character."));
@@ -121,6 +111,17 @@ export default function CreateCharacter() {
             setSubmitting(false);
         }
     };
+
+    if (!hasValidCampaignId) {
+        return (
+            <div className="p-6 text-stone-700">
+                <p className="mb-3 font-semibold">Missing/invalid campaign id in URL.</p>
+                <Button variant="subtle" type="button" onClick={() => navigate("/dashboard")}>
+                    Back to dashboard
+                </Button>
+            </div>
+        );
+    }
 
     return (
         <CharacterSheetForm
@@ -137,3 +138,5 @@ export default function CreateCharacter() {
         />
     );
 }
+
+    

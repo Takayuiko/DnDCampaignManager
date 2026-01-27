@@ -30,6 +30,7 @@ const defaultSkills: CharacterSkill[] = [
 ];
 
 const emptyForm: CharacterForm = {
+    campaignId: 0,
     // Identity
     name: "",
     class: "",
@@ -69,12 +70,6 @@ const emptyForm: CharacterForm = {
         charisma: { isProficient: false, miscBonus: 0 },
     },
 
-    // Death Saves
-    deathSaves: {
-        successes: 0,
-        failures: 0,
-    },
-
     // Temporal
     hitDice: {
         die: "d8",
@@ -83,8 +78,6 @@ const emptyForm: CharacterForm = {
     },
 
     attacks: [],
-
-    // Skills
     skills: defaultSkills,
 };
 
@@ -119,9 +112,9 @@ export default function EditCharacter() {
             try {
                 const res = await getCharacter(cid, chid);
 
-                // Merge defaults so any missing fields from backend don't break UI.
                 setForm({
                     ...emptyForm,
+                    campaignId: cid,
                     ...res.data,
                     skills:
                         Array.isArray(res.data?.skills) && res.data.skills.length > 0
@@ -152,8 +145,7 @@ export default function EditCharacter() {
         setSubmitting(true);
         try {
             await updateCharacterByCampaign(cid, chid, form);
-            // stay on page + show a message, OR redirect; choose redirect for now:
-            navigate("/dashboard");
+            alert("Character stats updated")
         } catch (err: any) {
             setError(extractApiError(err, "Failed to save character."));
         } finally {
