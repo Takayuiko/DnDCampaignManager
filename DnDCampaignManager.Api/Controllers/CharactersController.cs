@@ -98,19 +98,18 @@ namespace DnDCampaignManager.Api.Controllers
             {
                 foreach (var incoming in create.Skills)
                 {
-                    var existing = character.Skills.SingleOrDefault(s => s.Skill == incoming.Skill);
-                    if (existing == null) continue;
-
-                    existing.IsProficient = incoming.IsProficient;
-                    existing.IsExpertise = incoming.IsExpertise;
-                    existing.MiscBonus = incoming.MiscBonus;
+                    character.Skills.Add(new CharacterSkill
+                    {
+                        Skill = incoming.Skill,
+                        Ability = incoming.Ability,
+                        IsProficient = incoming.IsProficient,
+                        IsExpertise = incoming.IsExpertise,
+                        MiscBonus = incoming.MiscBonus
+                    });
                 }
             }
 
             _dnDxDbContext.Characters.Add(character);
-            await _dnDxDbContext.SaveChangesAsync();
-
-            _dnDxDbContext.CharacterSkills.AddRange(SkillDefaults.CreateDefaultSkills(character.Id));
             await _dnDxDbContext.SaveChangesAsync();
 
             return Ok(new CharacterResponseDto
