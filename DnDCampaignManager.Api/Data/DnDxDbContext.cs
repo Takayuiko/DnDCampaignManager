@@ -17,6 +17,8 @@ namespace DnDCampingManager.Api.Data
         public DbSet<CharacterSkill> CharacterSkills => Set<CharacterSkill>();
         public DbSet<CharacterAttack> CharacterAttacks => Set<CharacterAttack>();
         public DbSet<CharacterClassOption> CharacterClassOptions => Set<CharacterClassOption>();
+        public DbSet<CharacterRaceOption> CharacterRaceOptions => Set<CharacterRaceOption>();
+        public DbSet<CharacterBackgroundOption> CharacterBackgroundOptions => Set<CharacterBackgroundOption>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -100,6 +102,38 @@ namespace DnDCampingManager.Api.Data
                 .WithMany()
                 .HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<CharacterRaceOption>()
+                .HasIndex(x => new { x.UserId, x.NormalizedName, x.CampaignId })
+                .IsUnique();
+
+            modelBuilder.Entity<CharacterRaceOption>()
+                .HasOne(x => x.Campaign)
+                .WithMany()  
+                .HasForeignKey(x => x.CampaignId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<CharacterRaceOption>()
+                .HasOne(x => x.User)
+                .WithMany() 
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.NoAction);
+
+            modelBuilder.Entity<CharacterBackgroundOption>()
+                .HasIndex(x => new { x.UserId, x.NormalizedName, x.CampaignId })
+                .IsUnique();
+
+            modelBuilder.Entity<CharacterBackgroundOption>()
+                .HasOne(x => x.Campaign)
+                .WithMany()
+                .HasForeignKey(x => x.CampaignId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<CharacterBackgroundOption>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.NoAction);
         }
     }
 }

@@ -1,5 +1,6 @@
 import api from "./axios";
 
+// Campaign
 export const getCampaigns = () => api.get("/campaigns");
 
 export const getCampaign = (id: number) =>  api.get(`/campaigns/${id}`);
@@ -17,6 +18,7 @@ export function addPlayerToCampaign(campaignId: number, email: string) {
     return api.post(`/campaigns/${campaignId}/players`, { email });
 }
 
+// Character
 export const removePlayerFromCampaign = (campaignId: number, playerId: number) =>
     api.delete(`/campaigns/${campaignId}/players/${playerId}`)
 
@@ -39,3 +41,16 @@ export const getCharacterClass = (campaignId: number) =>
 export const addCharacterClass = (campaignId: number, data: { name: string; }) =>
     api.post(`/campaigns/${campaignId}/character-classes`, data);
 
+// Character Races
+export const getCharacterRaces = (campaignId: number) =>
+    api.get(`/campaigns/${campaignId}/character-races`);
+
+export const addCharacterRace = (campaignId: number, data: { name: string }) =>
+    api.post(`/campaigns/${campaignId}/character-races`, data);
+
+// Character Backgrounds
+export const getCharacterBackgrounds = (campaignId: number) =>
+    api.get(`/campaigns/${campaignId}/character-backgrounds`);
+
+export const addCharacterBackground = (campaignId: number, data: { name: string }) =>
+    api.post(`/campaigns/${campaignId}/character-backgrounds`, data);

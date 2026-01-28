@@ -1,9 +1,7 @@
 ﻿using DnDCampaignManager.Api.DTOs;
 using DnDCampaignManager.Api.Models;
-using DnDCampaignManager.Api.Services;
 using DnDCampingManager.Api.Data;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
@@ -108,6 +106,26 @@ namespace DnDCampaignManager.Api.Controllers
                     });
                 }
             }
+
+            var st = create.SavingThrows ?? new SavingThrowsDto();
+
+            character.SaveStrProficient = st.Strength.IsProficient;
+            character.SaveStrMiscBonus = st.Strength.MiscBonus;
+
+            character.SaveDexProficient = st.Dexterity.IsProficient;
+            character.SaveDexMiscBonus = st.Dexterity.MiscBonus;
+
+            character.SaveConProficient = st.Constitution.IsProficient;
+            character.SaveConMiscBonus = st.Constitution.MiscBonus;
+
+            character.SaveIntProficient = st.Intelligence.IsProficient;
+            character.SaveIntMiscBonus = st.Intelligence.MiscBonus;
+
+            character.SaveWisProficient = st.Wisdom.IsProficient;
+            character.SaveWisMiscBonus = st.Wisdom.MiscBonus;
+
+            character.SaveChaProficient = st.Charisma.IsProficient;
+            character.SaveChaMiscBonus = st.Charisma.MiscBonus;
 
             _dnDxDbContext.Characters.Add(character);
             await _dnDxDbContext.SaveChangesAsync();
@@ -236,6 +254,26 @@ namespace DnDCampaignManager.Api.Controllers
                 }
             }
 
+            var st = update.SavingThrows ?? new SavingThrowsDto();
+
+            character.SaveStrProficient = st.Strength.IsProficient;
+            character.SaveStrMiscBonus = st.Strength.MiscBonus;
+
+            character.SaveDexProficient = st.Dexterity.IsProficient;
+            character.SaveDexMiscBonus = st.Dexterity.MiscBonus;
+
+            character.SaveConProficient = st.Constitution.IsProficient;
+            character.SaveConMiscBonus = st.Constitution.MiscBonus;
+
+            character.SaveIntProficient = st.Intelligence.IsProficient;
+            character.SaveIntMiscBonus = st.Intelligence.MiscBonus;
+
+            character.SaveWisProficient = st.Wisdom.IsProficient;
+            character.SaveWisMiscBonus = st.Wisdom.MiscBonus;
+
+            character.SaveChaProficient = st.Charisma.IsProficient;
+            character.SaveChaMiscBonus = st.Charisma.MiscBonus;
+
             await _dnDxDbContext.SaveChangesAsync();
 
             return NoContent();
@@ -319,6 +357,15 @@ namespace DnDCampaignManager.Api.Controllers
                 HitPointTemporary = character.HitPointTemporary,
                 Inspiration = character.Inspiration,
                 HitDice = new HitDiceDto(character.HitDiceDie ?? string.Empty, character.HitDiceTotal ?? 0, character.HitDiceRemaining ?? 0),
+                SavingThrows = new SavingThrowsDto
+                {
+                    Strength = new SavingThrowDto { IsProficient = character.SaveStrProficient, MiscBonus = character.SaveStrMiscBonus },
+                    Dexterity = new SavingThrowDto { IsProficient = character.SaveDexProficient, MiscBonus = character.SaveDexMiscBonus },
+                    Constitution = new SavingThrowDto { IsProficient = character.SaveConProficient, MiscBonus = character.SaveConMiscBonus },
+                    Intelligence = new SavingThrowDto { IsProficient = character.SaveIntProficient, MiscBonus = character.SaveIntMiscBonus },
+                    Wisdom = new SavingThrowDto { IsProficient = character.SaveWisProficient, MiscBonus = character.SaveWisMiscBonus },
+                    Charisma = new SavingThrowDto { IsProficient = character.SaveChaProficient, MiscBonus = character.SaveChaMiscBonus },
+                },
                 Attacks = character.Attacks.Select(a => new CharacterAttackDto
                 {
                     Id = a.Id,

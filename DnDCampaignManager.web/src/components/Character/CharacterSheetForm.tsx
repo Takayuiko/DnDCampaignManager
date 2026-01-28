@@ -3,7 +3,14 @@ import Button from "../UI/Button";
 import ErrorPanel from "../UI/ErrorPanel";
 import { abilityModUtil, formatModUtil } from "../../Utils/dnd";
 import React, { useEffect, useMemo, useState } from "react";
-import { addCharacterClass, getCharacterClass } from "../../api/campaignApi";
+import {
+    addCharacterClass,
+    getCharacterClass,
+    addCharacterRace,
+    getCharacterRaces,
+    getCharacterBackgrounds,
+    addCharacterBackground
+} from "../../api/campaignApi";
 
 type SkillType =
     | "Acrobatics"
@@ -112,6 +119,20 @@ export type CharacterForm = {
     skills: CharacterSkill[];
 };
 
+type CharacterRaceOptionDto = {
+    id: number;
+    name: string;
+    isCustom: boolean
+};
+
+type CharacterBackgroundOptionDto ={
+        id: number;
+        name: string;
+        isCustom: boolean
+};
+
+type SavingThrowKey = typeof SAVING_THROW_ROWS[number]["key"];
+
 type Props = {
     title: string;
     subtitle?: string;
@@ -128,6 +149,15 @@ type Props = {
     error?: string | null;
 };
 
+const SAVING_THROW_ROWS = [
+    { key: "strength", label: "STR" },
+    { key: "dexterity", label: "DEX" },
+    { key: "constitution", label: "CON" },
+    { key: "intelligence", label: "INT" },
+    { key: "wisdom", label: "WIS" },
+    { key: "charisma", label: "CHA" },
+] as const;
+
 const CLASS_OPTIONS = [
     "Barbarian",
     "Bard",
@@ -143,6 +173,65 @@ const CLASS_OPTIONS = [
     "Wizard",
     "Artificer",
 ] as const;
+
+const ALIGNMENT_OPTIONS = [
+    "Lawful Good",
+    "Neutral Good",
+    "Chaotic Good",
+    "Lawful Neutral",
+    "Neutral",
+    "Chaotic Neutral",
+    "Lawful Evil",
+    "Neutral Evil",
+    "Chaotic Evil",
+] as const;
+
+const RACE_OPTIONS = [
+    "Dragonborn",
+    "Dwarf",
+    "Elf",
+    "Gnome",
+    "Half-Elf",
+    "Half-Orc",
+    "Halfling",
+    "Human",
+    "Tiefling",
+] as const;
+
+const BACKGROUND_OPTIONS = [
+    "Acolyte",
+    "Charlatan",
+    "Criminal",
+    "Entertainer",
+    "Folk Hero",
+    "Guild Artisan",
+    "Hermit",
+    "Noble",
+    "Outlander",
+    "Sage",
+    "Sailor",
+    "Soldier",
+    "Urchin"
+] as const;
+
+const isOfficialClass = (name: string) =>
+    CLASS_OPTIONS.some((x) => x.toLowerCase() === name.toLowerCase());
+
+const isOfficialRace = (name: string) =>
+    RACE_OPTIONS.some(r => r.toLowerCase() === name.toLowerCase());
+
+const isOfficialBackground = (name: string) =>
+    BACKGROUND_OPTIONS.some(r => r.toLowerCase() === name.toLowerCase())
+
+const abilityAbbrev = (a: AbilityType) =>
+({
+    Strength: "STR",
+    Dexterity: "DEX",
+    Constitution: "CON",
+    Intelligence: "INT",
+    Wisdom: "WIS",
+    Charisma: "CHA",
+}[a]);
 
 export default function CharacterSheetForm({
     title,
@@ -174,16 +263,6 @@ export default function CharacterSheetForm({
         }));
     };
 
-    const abilityAbbrev = (a: AbilityType) =>
-    ({
-        Strength: "STR",
-        Dexterity: "DEX",
-        Constitution: "CON",
-        Intelligence: "INT",
-        Wisdom: "WIS",
-        Charisma: "CHA",
-    }[a]);
-
     const prettySkill = (s: string) => s.replace(/([A-Z])/g, " $1").trim();
 
     const proficiencyFromLevel = (level: number) =>
@@ -208,17 +287,6 @@ export default function CharacterSheetForm({
                 return form.charisma;
         }
     };
-
-    const SAVING_THROW_ROWS = [
-        { key: "strength", label: "STR" },
-        { key: "dexterity", label: "DEX" },
-        { key: "constitution", label: "CON" },
-        { key: "intelligence", label: "INT" },
-        { key: "wisdom", label: "WIS" },
-        { key: "charisma", label: "CHA" },
-    ] as const;
-
-    type SavingThrowKey = typeof SAVING_THROW_ROWS[number]["key"];
 
     const savingThrowTotal = (key: SavingThrowKey, f: CharacterForm) => {
         const pb = proficiencyFromLevel(f.level);
@@ -246,7 +314,6 @@ export default function CharacterSheetForm({
         return mod + prof + exp + misc;
     };
 
-    // --- View toggle (true = read view, false = edit view) ---
     const [isReadView, setIsReadView] = useState(false);
 
     const abilities = [
@@ -260,13 +327,26 @@ export default function CharacterSheetForm({
 
     const pb = proficiencyFromLevel(form.level);
 
-    // --- Campaign-scoped class dropdown ---
+    // Class options + homebrew handling
     const [classOptions, setClassOptions] = useState<string[]>([]);
     const [classLoading, setClassLoading] = useState(false);
     const [classError, setClassError] = useState<string | null>(null);
-
     const [addingClass, setAddingClass] = useState(false);
     const [newClassName, setNewClassName] = useState("");
+
+    // Race options + homebrew handling
+    const [raceOptions, setRaceOptions] = useState<CharacterRaceOptionDto[]>([]);
+    const [raceLoading, setRaceLoading] = useState(false);
+    const [raceError, setRaceError] = useState<string | null>(null);
+    const [addingRace, setAddingRace] = useState(false);
+    const [newRaceName, setNewRaceName] = useState("");
+
+    // Background options + homebrew handling
+    const [backgroundOptions, setBackgroundOptions] = useState<CharacterBackgroundOptionDto[]>([]);
+    const [backgroundLoading, setBackgroundLoading] = useState(false);
+    const [backgroundError, setBackgroundError] = useState<string | null>(null);
+    const [addingBackground, setAddingBackground] = useState(false);
+    const [newBackgroundName, setNewBackgroundName] = useState("");
 
     async function loadClassOptions(campaignId: number) {
         setClassLoading(true);
@@ -291,19 +371,33 @@ export default function CharacterSheetForm({
         }
     }
 
-    useEffect(() => {
-        if (!form.campaignId) return;
-        loadClassOptions(form.campaignId);
-    }, [form.campaignId]);
+    async function loadRaceOptions(campaignId: number) {
+        setRaceLoading(true);
+        setRaceError(null);
+        try {
+            const res = await getCharacterRaces(campaignId);
+            setRaceOptions(res.data);
+        } catch {
+            setRaceError("Could not load races for this campaign.");
+        } finally {
+            setRaceLoading(false);
+        }
+    }
 
-    const classNames = useMemo(
-        () => [...new Set(classOptions)].sort((a, b) => a.localeCompare(b)),
-        [classOptions]
-    );
+    async function loadBackgroundOptions(campaignId: number) {
+        setBackgroundLoading(true);
+        setBackgroundError(null);
+        try {
+            const res = await getCharacterBackgrounds(campaignId);
+            setBackgroundOptions(res.data);
+        } catch {
+            setBackgroundError("Could not load background for this campaign.");
+        } finally {
+            setBackgroundLoading(false);
+        }
+    }
 
-    const isOfficialClass = (name: string) =>
-        CLASS_OPTIONS.some((x) => x.toLowerCase() === name.toLowerCase());
-
+    // Handle adding homebrew class
     async function handleAddClass() {
         const name = newClassName.trim();
         if (!name || !form.campaignId) return;
@@ -327,6 +421,79 @@ export default function CharacterSheetForm({
             setClassError(typeof msg === "string" ? msg : "Could not add class.");
         }
     }
+
+    // Handle adding homebrew race
+    async function handleAddRace() {
+        const name = newRaceName.trim();
+        if (!name || !form.campaignId) return;
+
+        try {
+            setRaceError(null);
+            const res = await addCharacterRace(form.campaignId, { name });
+            const added = res.data as CharacterRaceOptionDto;
+
+            setRaceOptions(prev => {
+                if (prev.some(x => x.name.toLowerCase() === added.name.toLowerCase())) return prev;
+                return [...prev, added];
+            });
+
+            setForm(prev => ({ ...prev, race: added.name }));
+            setAddingRace(false);
+            setNewRaceName("");
+        } catch (err: any) {
+            const msg = err?.response?.data;
+            setRaceError(typeof msg === "string" ? msg : "Could not add race.");
+        }
+    }
+
+    // Handle adding homebrew background
+    async function handleAddBackground() {
+        const name = newBackgroundName.trim();
+        if (!name || !form.campaignId) return;
+
+        try {
+            setBackgroundError(null);
+
+            const res = await addCharacterBackground(form.campaignId, { name });
+            const added = res.data as CharacterBackgroundOptionDto;
+
+            setBackgroundOptions(prev => {
+                if (prev.some(x => x.name.toLowerCase() === added.name.toLowerCase())) return prev;
+                return [...prev, added];
+            });
+
+            setForm(prev => ({ ...prev, background: added.name }));
+            setAddingBackground(false);
+            setNewBackgroundName("");
+        } catch (err: any) {
+            const msg = err?.response?.data;
+            setBackgroundError(typeof msg === "string" ? msg : "Could not add background.");
+        }
+    }
+
+    const classNames = useMemo(
+        () => [...new Set(classOptions)].sort((a, b) => a.localeCompare(b)),
+        [classOptions]
+    );
+
+    const raceNames = useMemo(() => {
+        const names = raceOptions.map(x => x.name).filter(Boolean);
+        return Array.from(new Set(names.map(n => n.trim())))
+            .sort((a, b) => a.localeCompare(b));
+    }, [raceOptions]);
+
+    const backgroundNames = useMemo(() => {
+        const names = backgroundOptions.map(x => x.name).filter(Boolean);
+        return Array.from(new Set(names.map(n => n.trim())))
+            .sort((a, b) => a.localeCompare(b));
+    }, [backgroundOptions]);
+
+    useEffect(() => {
+        if (!form.campaignId) return;
+        loadClassOptions(form.campaignId);
+        loadRaceOptions(form.campaignId);
+        loadBackgroundOptions(form.campaignId);
+    }, [form.campaignId]);
 
     // -------------------- EDIT VIEW --------------------
     const EditView = (
@@ -451,31 +618,147 @@ export default function CharacterSheetForm({
                             )}
                         </div>
 
-                        {/* Race */}
+                        {/* Race + Homebrew */}
                         <div>
-                            <label className="block text-sm font-semibold text-stone-700">
-                                Race
-                            </label>
-                            <input
+                            <div className="flex items-center justify-between">
+                                <label className="block text-sm font-semibold text-stone-700">
+                                    Race
+                                </label>
+
+                                <button
+                                    type="button"
+                                    className="text-xs font-semibold text-emerald-800 hover:underline"
+                                    onClick={() => setAddingRace(v => !v)}
+                                >
+                                    {addingRace ? "Close" : "Add homebrew"}
+                                </button>
+                            </div>
+
+                            <select
                                 name="race"
                                 value={form.race}
                                 onChange={handleChange}
                                 className="w-full border border-stone-400 rounded-md p-2 bg-white"
                                 required
-                            />
+                                disabled={raceLoading}
+                            >
+                                <option value="" disabled>
+                                    {raceLoading ? "Summoning races..." : "Choose a race"}
+                                </option>
+
+                                <optgroup label="Official">
+                                    {raceNames.filter(isOfficialRace).map(r => (
+                                        <option key={r} value={r}>{r}</option>
+                                    ))}
+                                </optgroup>
+
+                                <optgroup label="Homebrew">
+                                    {raceNames.filter(r => !isOfficialRace(r)).map(r => (
+                                        <option key={r} value={r}>{r}</option>
+                                    ))}
+                                </optgroup>
+                            </select>
+
+                            {raceError && <p className="mt-1 text-xs text-red-700">{raceError}</p>}
+
+                            {addingRace && (
+                                <div className="mt-2 rounded-lg border border-stone-300 bg-amber-50 p-3">
+                                    <p className="text-xs text-stone-600 mb-2">
+                                        Add a homebrew race to this campaign’s roster.
+                                    </p>
+
+                                    <div className="flex gap-2">
+                                        <input
+                                            value={newRaceName}
+                                            onChange={(e) => setNewRaceName(e.target.value)}
+                                            placeholder="e.g. Aasimar"
+                                            className="flex-1 border border-stone-400 rounded-md p-2 bg-white"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={handleAddRace}
+                                            className="px-3 py-2 text-sm font-semibold rounded-lg bg-emerald-700 text-white hover:bg-emerald-600"
+                                        >
+                                            Inscribe
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
-                        {/* Background */}
+                        {/* Background + Homebrew */}
                         <div>
-                            <label className="block text-sm font-semibold text-stone-700">
-                                Background
-                            </label>
-                            <input
+                            <div className="flex items-center justify-between">
+                                <label className="block text-sm font-semibold text-stone-700">
+                                    Background
+                                </label>
+
+                                <button
+                                    type="button"
+                                    className="text-xs font-semibold text-emerald-800 hover:underline"
+                                    onClick={() => setAddingBackground((v) => !v)}
+                                >
+                                    {addingBackground ? "Close" : "Add homebrew"}
+                                </button>
+                            </div>
+
+                            <select
                                 name="background"
                                 value={form.background}
                                 onChange={handleChange}
                                 className="w-full border border-stone-400 rounded-md p-2 bg-white"
-                            />
+                                disabled={backgroundLoading}
+                            >
+                                <option value="" disabled>
+                                    {backgroundLoading ? "Summoning backgrounds..." : "Choose a background"}
+                                </option>
+
+                                <optgroup label="Official">
+                                    {backgroundNames
+                                        .filter((b) => isOfficialBackground(b))
+                                        .map((b) => (
+                                            <option key={b} value={b}>
+                                                {b}
+                                            </option>
+                                        ))}
+                                </optgroup>
+
+                                <optgroup label="Homebrew">
+                                    {backgroundNames
+                                        .filter((b) => !isOfficialBackground(b))
+                                        .map((b) => (
+                                            <option key={b} value={b}>
+                                                {b}
+                                            </option>
+                                        ))}
+                                </optgroup>
+                            </select>
+
+                            {backgroundError && <p className="mt-1 text-xs text-red-700">{backgroundError}</p>}
+
+                            {addingBackground && (
+                                <div className="mt-2 rounded-lg border border-stone-300 bg-amber-50 p-3">
+                                    <p className="text-xs text-stone-600 mb-2">
+                                        Add a homebrew background to this campaign’s roster.
+                                    </p>
+
+                                    <div className="flex gap-2">
+                                        <input
+                                            value={newBackgroundName}
+                                            onChange={(e) => setNewBackgroundName(e.target.value)}
+                                            placeholder="e.g. Haunted One"
+                                            className="flex-1 border border-stone-400 rounded-md p-2 bg-white"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={handleAddBackground}
+                                            className="px-3 py-2 text-sm font-semibold rounded-lg bg-emerald-700 text-white hover:bg-emerald-600"
+                                        >
+                                            Inscribe
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         {/* Alignment */}
@@ -483,12 +766,26 @@ export default function CharacterSheetForm({
                             <label className="block text-sm font-semibold text-stone-700">
                                 Alignment
                             </label>
-                            <input
+
+                            <select
                                 name="alignment"
                                 value={form.alignment}
-                                onChange={handleChange}
+                                onChange={(e) =>
+                                    setForm((prev) => ({ ...prev, alignment: e.target.value }))
+                                }
                                 className="w-full border border-stone-400 rounded-md p-2 bg-white"
-                            />
+                            >
+                                <option value="">Choose alignment</option>
+                                {ALIGNMENT_OPTIONS.map((a) => (
+                                    <option key={a} value={a}>
+                                        {a}
+                                    </option>
+                                ))}
+                            </select>
+
+                            <p className="mt-1 text-xs text-stone-500">
+                                “Neutral” = True Neutral.
+                            </p>
                         </div>
 
                         {/* XP */}
