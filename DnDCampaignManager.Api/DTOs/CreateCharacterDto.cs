@@ -24,6 +24,7 @@
         int HitPointTemporary,
         bool Inspiration,
         HitDiceDto? HitDice,
+        SavingThrowsDto SavingThrows,
         List<CharacterAttackDto>? Attacks,
         List<CharacterSkillDto> Skills
     );

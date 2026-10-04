@@ -38,6 +38,9 @@ namespace DnDCampaignManager.Api.DTOs
         // Hit Dice
         public HitDiceDto HitDice { get; set; } = new HitDiceDto("d8", 1 , 1);
 
+        // Saving Throws
+        public SavingThrowsDto SavingThrows { get; init; } = default!;
+
         // Attacks and Skills
         public List<CharacterAttackDto> Attacks { get; set; } = new();
         public List<CharacterSkillDto> Skills { get; set; } = new();

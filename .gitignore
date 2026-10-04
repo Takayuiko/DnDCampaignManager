@@ -396,3 +396,9 @@ DnDCampaignManager.web/.env.*
 
 *.sqlite
 *.sqlite3
+
+# AI / local infrastructure secrets
+.env
+**/.env
+**/.env.*
+!**/.env.example

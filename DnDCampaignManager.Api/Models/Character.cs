@@ -47,6 +47,20 @@ namespace DnDCampaignManager.Api.Models
         public int? HitDiceTotal { get; set; }
         public int? HitDiceRemaining { get; set; }
 
+        // Saving throws
+        public bool SaveStrProficient { get; set; }
+        public int SaveStrMiscBonus { get; set; }
+        public bool SaveDexProficient { get; set; }
+        public int SaveDexMiscBonus { get; set; }
+        public bool SaveConProficient { get; set; }
+        public int SaveConMiscBonus { get; set; }
+        public bool SaveIntProficient { get; set; }
+        public int SaveIntMiscBonus { get; set; }
+        public bool SaveWisProficient { get; set; }
+        public int SaveWisMiscBonus { get; set; }
+        public bool SaveChaProficient { get; set; }
+        public int SaveChaMiscBonus { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         // Attacks and Skills

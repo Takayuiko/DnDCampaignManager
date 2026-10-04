@@ -69,6 +69,7 @@ export default function Navbar() {
                         ) : (
                             <>
                                 <NavLink to="/dashboard" label="Dashboard" />
+                                <NavLink to="/ai" label="AI Assistant" />
                                 <button
                                     onClick={handleLogout}
                                     className="ml-2 rounded-lg bg-red-800 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-red-700"
@@ -101,6 +102,7 @@ export default function Navbar() {
                             ) : (
                                 <div className="flex flex-col gap-2">
                                     <NavLink to="/dashboard" label="Dashboard" onClick={close} />
+                                    <NavLink to="/ai" label="AI Assistant" onClick={close} />
                                     <button
                                         onClick={handleLogout}
                                         className="rounded-lg bg-red-800 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-red-700"

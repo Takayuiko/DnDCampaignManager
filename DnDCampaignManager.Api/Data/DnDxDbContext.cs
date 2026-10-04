@@ -1,4 +1,5 @@
-﻿using DnDCampaignManager.Api.Models;
+using DnDCampaignManager.Api.Models;
+using DnDCampaignManager.Api.Models.AI;
 using DnDCampingManager.Api.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,6 +18,10 @@ namespace DnDCampingManager.Api.Data
         public DbSet<CharacterSkill> CharacterSkills => Set<CharacterSkill>();
         public DbSet<CharacterAttack> CharacterAttacks => Set<CharacterAttack>();
         public DbSet<CharacterClassOption> CharacterClassOptions => Set<CharacterClassOption>();
+        public DbSet<CharacterRaceOption> CharacterRaceOptions => Set<CharacterRaceOption>();
+        public DbSet<CharacterBackgroundOption> CharacterBackgroundOptions => Set<CharacterBackgroundOption>();
+        public DbSet<AIConversation> AIConversations => Set<AIConversation>();
+        public DbSet<AIMessage> AIMessages => Set<AIMessage>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -100,6 +105,60 @@ namespace DnDCampingManager.Api.Data
                 .WithMany()
                 .HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<CharacterRaceOption>()
+                .HasIndex(x => new { x.UserId, x.NormalizedName, x.CampaignId })
+                .IsUnique();
+
+            modelBuilder.Entity<CharacterRaceOption>()
+                .HasOne(x => x.Campaign)
+                .WithMany()  
+                .HasForeignKey(x => x.CampaignId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<CharacterRaceOption>()
+                .HasOne(x => x.User)
+                .WithMany() 
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.NoAction);
+
+            modelBuilder.Entity<CharacterBackgroundOption>()
+                .HasIndex(x => new { x.UserId, x.NormalizedName, x.CampaignId })
+                .IsUnique();
+
+            modelBuilder.Entity<CharacterBackgroundOption>()
+                .HasOne(x => x.Campaign)
+                .WithMany()
+                .HasForeignKey(x => x.CampaignId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<CharacterBackgroundOption>()
+                .HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.NoAction);
+
+            modelBuilder.Entity<AIConversation>()
+                .HasIndex(x => new { x.UserId, x.UpdatedAtUtc });
+
+            modelBuilder.Entity<AIConversation>()
+                .HasOne(x => x.User)
+                .WithMany(u => u.AIConversations)
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<AIMessage>()
+                .HasIndex(x => new { x.ConversationId, x.CreatedAtUtc });
+
+            modelBuilder.Entity<AIMessage>()
+                .HasOne(x => x.Conversation)
+                .WithMany(x => x.Messages)
+                .HasForeignKey(x => x.ConversationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<AIMessage>()
+                .Property(x => x.EstimatedCostUsd)
+                .HasPrecision(18, 8);
         }
     }
 }

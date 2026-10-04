@@ -1,4 +1,5 @@
-﻿using DnDCampaignManager.Api.Models;
+using DnDCampaignManager.Api.Models;
+using DnDCampaignManager.Api.Models.AI;
 
 namespace DnDCampingManager.Api.Models
 {
@@ -14,5 +15,6 @@ namespace DnDCampingManager.Api.Models
         public ICollection<Campaign> OwnedCampaigns { get; set; } = new List<Campaign>();
         public ICollection<CharacterClassOption> CharacterClassOptions { get; set; } = new List<CharacterClassOption>();
         public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
+        public ICollection<AIConversation> AIConversations { get; set; } = new List<AIConversation>();
     }
 }

@@ -1,3 +1,4 @@
+using DnDCampaignManager.Api.Services.AI;
 using DnDCampingManager.Api.Data;
 using DnDCampingManager.Api.Models;
 using DnDCampingManager.Api.Options;
@@ -5,19 +6,23 @@ using DnDCampingManager.Api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
+using System.Threading.RateLimiting;
+using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using OpenAI.Responses;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Controllers
 builder.Services.AddControllers()
-  .AddJsonOptions(o =>
-  {
-      o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
-  });
+    .AddJsonOptions(o =>
+    {
+        o.JsonSerializerOptions.Converters.Add(
+            new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
 
 // Swagger
 builder.Services.AddEndpointsApiExplorer();
@@ -49,46 +54,62 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
-// DbContext
-var cs = builder.Configuration.GetConnectionString("DefaultConnection") ?? "";
+// PostgreSQL
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "ConnectionStrings:DefaultConnection must be configured.");
+}
 
 builder.Services.AddDbContext<DnDxDbContext>(options =>
-{
-    var looksLikeSqlServer =
-        cs.Contains("Server=", StringComparison.OrdinalIgnoreCase) ||
-        cs.Contains(".database.windows.net", StringComparison.OrdinalIgnoreCase) ||
-        cs.Contains("Initial Catalog=", StringComparison.OrdinalIgnoreCase);
-
-    if (looksLikeSqlServer)
-        options.UseSqlServer(cs);
-    else
-        options.UseSqlite(cs);
-});
+    options.UseNpgsql(connectionString));
 
 // Validate JWT secret
-builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
+builder.Services.Configure<JwtOptions>(
+    builder.Configuration.GetSection("Jwt"));
 
-var jwtOptions = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new JwtOptions();
+var jwtOptions =
+    builder.Configuration.GetSection("Jwt").Get<JwtOptions>()
+    ?? new JwtOptions();
 
 if (string.IsNullOrWhiteSpace(jwtOptions.Issuer) ||
     string.IsNullOrWhiteSpace(jwtOptions.Audience))
 {
-    throw new InvalidOperationException("Jwt:Issuer and Jwt:Audience must be configured.");
+    throw new InvalidOperationException(
+        "Jwt:Issuer and Jwt:Audience must be configured.");
 }
 
 if (jwtOptions.SigningKeys == null || jwtOptions.SigningKeys.Count == 0)
 {
-    throw new InvalidOperationException("Jwt:SigningKeys must contain at least one key.");
+    throw new InvalidOperationException(
+        "Jwt:SigningKeys must contain at least one key.");
 }
 
-if (jwtOptions.SigningKeys.Any(k => string.IsNullOrWhiteSpace(k.Kid) || string.IsNullOrWhiteSpace(k.Key)))
+if (jwtOptions.SigningKeys.Any(
+        k => string.IsNullOrWhiteSpace(k.Kid) ||
+             string.IsNullOrWhiteSpace(k.Key)))
 {
-    throw new InvalidOperationException("Each Jwt:SigningKeys entry must have Kid and Key.");
+    throw new InvalidOperationException(
+        "Each Jwt:SigningKeys entry must have Kid and Key.");
 }
 
-// Service
+// Application services
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddScoped<IJwtService, JwtService>();
+
+// OpenAI Responses API
+var openAiApiKey = builder.Configuration["OpenAI:ApiKey"];
+
+if (string.IsNullOrWhiteSpace(openAiApiKey))
+{
+    throw new InvalidOperationException(
+        "OpenAI:ApiKey must be configured using .NET User Secrets or an environment variable.");
+}
+
+builder.Services.AddSingleton(new ResponsesClient(openAiApiKey));
+builder.Services.AddScoped<IAIService, OpenAIService>();
 
 // Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -96,11 +117,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     {
         var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()!;
 
-        // build dictionary of keys by kid
         var keysByKid = jwt.SigningKeys.ToDictionary(
             k => k.Kid,
-            k => new SymmetricSecurityKey(Encoding.UTF8.GetBytes(k.Key)) { KeyId = k.Kid }
-        );
+            k => new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(k.Key))
+            {
+                KeyId = k.Kid
+            });
 
         options.TokenValidationParameters = new TokenValidationParameters
         {
@@ -112,19 +135,39 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidIssuer = jwt.Issuer,
             ValidAudience = jwt.Audience,
 
-            // Use kid from token header to pick correct signing key
-            IssuerSigningKeyResolver = (token, securityToken, kid, validationParameters) =>
-            {
-                if (!string.IsNullOrWhiteSpace(kid) && keysByKid.TryGetValue(kid, out var key))
-                    return new[] { key };
+            IssuerSigningKeyResolver =
+                (token, securityToken, kid, validationParameters) =>
+                {
+                    if (!string.IsNullOrWhiteSpace(kid) &&
+                        keysByKid.TryGetValue(kid, out var key))
+                    {
+                        return new[] { key };
+                    }
 
-                // Fallback: try all keys (useful if kid missing)
-                return keysByKid.Values;
-            }
+                    return keysByKid.Values;
+                }
         };
     });
 
 // Authorization
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddPolicy("ai", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? httpContext.Connection.RemoteIpAddress?.ToString()
+                ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+});
+
 builder.Services.AddAuthorization(options =>
 {
     options.FallbackPolicy = new AuthorizationPolicyBuilder()
@@ -148,21 +191,19 @@ if (builder.Environment.IsDevelopment())
     });
 }
 
-// Build App
+// Build app
 var app = builder.Build();
 
+// Apply EF Core migrations at startup.
+// Phase 1 intentionally uses migrations rather than EnsureCreated so the
+// database lifecycle remains compatible with the production plan.
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<DnDxDbContext>();
-    var provider = db.Database.ProviderName ?? "";
-
-    if (provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
-        db.Database.Migrate();
-    else
-        db.Database.EnsureCreated();
+    db.Database.Migrate();
 }
 
-// middleware pipeline
+// Middleware pipeline
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -180,16 +221,16 @@ if (!app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapControllers();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }))
-   .AllowAnonymous();
+    .AllowAnonymous();
 
 if (!app.Environment.IsDevelopment())
 {
-    app.MapFallbackToFile("index.html").AllowAnonymous(); ;
+    app.MapFallbackToFile("index.html").AllowAnonymous();
 }
 
 app.Run();
-

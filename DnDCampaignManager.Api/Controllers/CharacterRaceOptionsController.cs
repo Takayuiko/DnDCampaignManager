@@ -1,4 +1,5 @@
 ﻿using DnDCampingManager.Api.Data;
+using DnDCampaignManager.Api.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
@@ -6,18 +7,18 @@ using System.Security.Claims;
 namespace DnDCampaignManager.Api.Controllers
 {
     [ApiController]
-    [Route("api/campaigns/{campaignId}/character-classes")]
-    public class CharacterClassOptionsController : ControllerBase
+    [Route("api/campaigns/{campaignId}/character-races")]
+    public class CharacterRaceOptionsController : ControllerBase
     {
         private readonly DnDxDbContext _dnDxDbContext;
 
-        private static readonly string[] DefaultClasses =
+        private static readonly string[] DefaultRaces =
         {
-            "Barbarian","Bard","Cleric","Druid","Fighter","Monk","Paladin",
-            "Ranger","Rogue","Sorcerer","Warlock","Wizard","Artificer"
+            "Dragonborn","Dwarf","Elf","Gnome","Half-Elf","Half-Orc",
+            "Halfling","Human","Tiefling"
         };
 
-        public CharacterClassOptionsController(DnDxDbContext db) => _dnDxDbContext = db;
+        public CharacterRaceOptionsController(DnDxDbContext db) => _dnDxDbContext = db;
 
         private int GetUserId()
         {
@@ -25,11 +26,11 @@ namespace DnDCampaignManager.Api.Controllers
             return int.TryParse(raw, out var id) ? id : 0;
         }
 
-        public record ClassOptionDto(int Id, string Name, bool IsCustom);
-        public record CharacterClassOption(string Name);
+        public record CharacterRaceOptionDto(int Id, string Name, bool IsCustom);
+        public record AddRaceRequest(string Name);
 
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<ClassOptionDto>>> Get(int campaignId)
+        public async Task<ActionResult<IEnumerable<CharacterRaceOptionDto>>> Get(int campaignId)
         {
             var userId = GetUserId();
             if (userId <= 0) return Unauthorized();
@@ -40,47 +41,46 @@ namespace DnDCampaignManager.Api.Controllers
 
             if (!hasAccess) return Forbid();
 
-            var custom = await _dnDxDbContext.CharacterClassOptions
+            var custom = await _dnDxDbContext.CharacterRaceOptions
                 .Where(x => x.CampaignId == campaignId)
                 .OrderBy(x => x.Name)
-                .Select(x => new ClassOptionDto(x.Id, x.Name, true))
+                .Select(x => new CharacterRaceOptionDto(x.Id, x.Name, true))
                 .ToListAsync();
 
-            var defaults = DefaultClasses
+            var defaults = DefaultRaces
                 .OrderBy(x => x)
-                .Select(x => new ClassOptionDto(0, x, false));
+                .Select(x => new CharacterRaceOptionDto(0, x, false));
 
             return Ok(defaults.Concat(custom));
         }
 
         [HttpPost]
-        public async Task<ActionResult<ClassOptionDto>> Add(int campaignId, [FromBody] CharacterClassOption req)
+        public async Task<ActionResult<CharacterRaceOptionDto>> Add(int campaignId, [FromBody] AddRaceRequest req)
         {
             var userId = GetUserId();
             if (userId <= 0) return Unauthorized();
 
             var hasAccess = await _dnDxDbContext.Campaigns.AnyAsync(c =>
-            c.Id == campaignId &&
-            (c.OwnerId == userId || c.Players.Any(p => p.UserId == userId)));
+                c.Id == campaignId &&
+                (c.OwnerId == userId || c.Players.Any(p => p.UserId == userId)));
 
             if (!hasAccess) return Forbid();
 
             var name = (req?.Name ?? "").Trim();
             if (name.Length < 2 || name.Length > 50)
-                return BadRequest("Class name must be 2–50 characters.");
+                return BadRequest("Race name must be 2–50 characters.");
 
-            // Don’t allow duplicates vs defaults
-            if (DefaultClasses.Any(d => d.Equals(name, StringComparison.OrdinalIgnoreCase)))
-                return Conflict("That class already exists in the default list.");
+            if (DefaultRaces.Any(d => d.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                return Conflict("That race already exists in the default list.");
 
             var normalized = name.ToUpperInvariant();
 
-            var exists = await _dnDxDbContext.CharacterClassOptions.AnyAsync(x =>
+            var exists = await _dnDxDbContext.CharacterRaceOptions.AnyAsync(x =>
                 x.CampaignId == campaignId && x.NormalizedName == normalized);
 
-            if (exists) return Conflict("You already added that class.");
+            if (exists) return Conflict("You already added that race.");
 
-            var option = new Models.CharacterClassOption
+            var option = new CharacterRaceOption
             {
                 CampaignId = campaignId,
                 UserId = userId,
@@ -88,10 +88,10 @@ namespace DnDCampaignManager.Api.Controllers
                 NormalizedName = normalized
             };
 
-            _dnDxDbContext.CharacterClassOptions.Add(option);
+            _dnDxDbContext.CharacterRaceOptions.Add(option);
             await _dnDxDbContext.SaveChangesAsync();
 
-            return Ok(new ClassOptionDto(option.Id, option.Name, true));
+            return Ok(new CharacterRaceOptionDto(option.Id, option.Name, true));
         }
     }
 }
