@@ -11,6 +11,7 @@ import CreateCampaign from "./pages/CreateCampaign";
 import EditCampaign from "./pages/EditCampaign";
 import CreateCharacter from "./pages/CreateCharacter";
 import EditCharacter from "./pages/EditCharacter";
+import AIChat from "./pages/AIChat";
 
 function App() {
     const { loading } = useAuth();
@@ -35,6 +36,14 @@ function App() {
                     }
                 />
                 <Route
+                    path="/ai"
+                    element={
+                        <ProtectedRoute>
+                            <AIChat />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
                     path="/campaigns/new"
                     element={
                         <RoleRoute role="DM">
@@ -43,7 +52,7 @@ function App() {
                     }
                 />
                 <Route
-                    path="/campaigns/:id/edit"
+                    path="/campaigns/:campaignId/edit"
                     element={
                         <RoleRoute role="DM">
                             <EditCampaign />

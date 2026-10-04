@@ -1,4 +1,5 @@
 import api from "./axios";
+import { type GetCharacterResponse } from "../components/Character/CharacterSheetForm";
 
 // Campaign
 export const getCampaigns = () => api.get("/campaigns");
@@ -26,7 +27,7 @@ export const createCharacter = (campaignId: number, data: any) =>
     api.post(`/campaigns/${campaignId}/characters`, data);
 
 export const getCharacter = (campaignId: number, characterId: number) =>
-    api.get(`/campaigns/${campaignId}/characters/${characterId}`);
+    api.get<GetCharacterResponse>(`/campaigns/${campaignId}/characters/${characterId}`);
 
 export const getCharactersByCampaign = (campaignId: number) =>
     api.get(`/campaigns/${campaignId}/characters`);

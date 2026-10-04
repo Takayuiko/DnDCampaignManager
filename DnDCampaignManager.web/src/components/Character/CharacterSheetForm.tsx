@@ -48,15 +48,20 @@ export type CharacterSkill = {
     miscBonus: number;
 };
 
-export type SavingThrow = {
-    isProficient: boolean;
-    miscBonus: number;
+export type CharacterOptionsPayload = {
+    classes: { id: number; name: string; isCustom: boolean }[];
+    races: { id: number; name: string; isCustom: boolean }[];
+    backgrounds: { id: number; name: string; isCustom: boolean }[];
 };
 
-export type CharacterClassOption = {
-    id: number;
-    name: string;
-    isCustom: boolean;
+export type GetCharacterResponse = {
+    character: CharacterForm;          
+    options: CharacterOptionsPayload;  
+};
+
+type SavingThrow = {
+    isProficient: boolean;
+    miscBonus: number;
 };
 
 type HitDice = {
@@ -147,6 +152,8 @@ type Props = {
     submitLabel: string;
     submitting?: boolean;
     error?: string | null;
+
+    initialOptions?: CharacterOptionsPayload | null;
 };
 
 const SAVING_THROW_ROWS = [
@@ -214,15 +221,6 @@ const BACKGROUND_OPTIONS = [
     "Urchin"
 ] as const;
 
-const isOfficialClass = (name: string) =>
-    CLASS_OPTIONS.some((x) => x.toLowerCase() === name.toLowerCase());
-
-const isOfficialRace = (name: string) =>
-    RACE_OPTIONS.some(r => r.toLowerCase() === name.toLowerCase());
-
-const isOfficialBackground = (name: string) =>
-    BACKGROUND_OPTIONS.some(r => r.toLowerCase() === name.toLowerCase())
-
 const abilityAbbrev = (a: AbilityType) =>
 ({
     Strength: "STR",
@@ -232,6 +230,15 @@ const abilityAbbrev = (a: AbilityType) =>
     Wisdom: "WIS",
     Charisma: "CHA",
 }[a]);
+
+const isOfficialClass = (name: string) =>
+    CLASS_OPTIONS.some((x) => x.toLowerCase() === name.toLowerCase());
+
+const isOfficialRace = (name: string) =>
+    RACE_OPTIONS.some(r => r.toLowerCase() === name.toLowerCase());
+
+const isOfficialBackground = (name: string) =>
+    BACKGROUND_OPTIONS.some(r => r.toLowerCase() === name.toLowerCase())
 
 export default function CharacterSheetForm({
     title,
@@ -243,8 +250,8 @@ export default function CharacterSheetForm({
     submitLabel,
     submitting,
     error,
+    initialOptions
 }: Props) {
-    // --- Shared styling helpers (keeps things consistent) ---
     const sectionClass =
         "bg-stone-50 border border-stone-300 rounded-xl p-4";
     const sectionTitleClass =
@@ -314,8 +321,6 @@ export default function CharacterSheetForm({
         return mod + prof + exp + misc;
     };
 
-    const [isReadView, setIsReadView] = useState(false);
-
     const abilities = [
         { key: "Strength", score: form.strength },
         { key: "Dexterity", score: form.dexterity },
@@ -348,6 +353,9 @@ export default function CharacterSheetForm({
     const [addingBackground, setAddingBackground] = useState(false);
     const [newBackgroundName, setNewBackgroundName] = useState("");
 
+    const [isReadView, setIsReadView] = useState(false);
+
+    // -------------------- Loaders --------------------------------------
     async function loadClassOptions(campaignId: number) {
         setClassLoading(true);
         setClassError(null);
@@ -397,7 +405,7 @@ export default function CharacterSheetForm({
         }
     }
 
-    // Handle adding homebrew class
+    // -------------------- Homebrew handlers ----------------------------
     async function handleAddClass() {
         const name = newClassName.trim();
         if (!name || !form.campaignId) return;
@@ -422,7 +430,6 @@ export default function CharacterSheetForm({
         }
     }
 
-    // Handle adding homebrew race
     async function handleAddRace() {
         const name = newRaceName.trim();
         if (!name || !form.campaignId) return;
@@ -446,7 +453,6 @@ export default function CharacterSheetForm({
         }
     }
 
-    // Handle adding homebrew background
     async function handleAddBackground() {
         const name = newBackgroundName.trim();
         if (!name || !form.campaignId) return;
@@ -471,6 +477,7 @@ export default function CharacterSheetForm({
         }
     }
 
+    // -------------------- Homebrew Name Changers -----------------------
     const classNames = useMemo(
         () => [...new Set(classOptions)].sort((a, b) => a.localeCompare(b)),
         [classOptions]
@@ -490,10 +497,26 @@ export default function CharacterSheetForm({
 
     useEffect(() => {
         if (!form.campaignId) return;
+
+        if (initialOptions) {
+            const customClassNames = initialOptions.classes.filter(x => x.isCustom).map(x => x.name);
+            const merged = [...CLASS_OPTIONS, ...customClassNames]
+                .filter(Boolean)
+                .reduce<string[]>((acc, name) => {
+                    const exists = acc.some(x => x.toLowerCase() === name.toLowerCase());
+                    if (!exists) acc.push(name);
+                    return acc;
+                }, []);
+            setClassOptions(merged);
+            setRaceOptions(initialOptions.races);
+            setBackgroundOptions(initialOptions.backgrounds);
+            return;
+        }
+
         loadClassOptions(form.campaignId);
         loadRaceOptions(form.campaignId);
         loadBackgroundOptions(form.campaignId);
-    }, [form.campaignId]);
+    }, [form.campaignId, initialOptions]);
 
     // -------------------- EDIT VIEW --------------------
     const EditView = (
@@ -501,7 +524,7 @@ export default function CharacterSheetForm({
             title={title}
             subtitle={subtitle}
             topRight={
-                <Button type="button" variant="ghost" onClick={() => setIsReadView(true)}>
+                <Button type="button" variant="subtle" onClick={() => setIsReadView(true)}>
                     Read View
                 </Button>
             }
@@ -1346,8 +1369,8 @@ export default function CharacterSheetForm({
             title={title}
             subtitle={subtitle}
             topRight={
-                <Button type="button" variant="ghost" onClick={() => setIsReadView(false)}>
-                    Edit
+                <Button type="button" variant="subtle" onClick={() => setIsReadView(false)}>
+                    Edit View
                 </Button>
             }
         >
