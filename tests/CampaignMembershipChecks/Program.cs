@@ -444,10 +444,10 @@ sealed class FakeAIService : IAIService
     private static AICompletionResult Completion => new("Hello", "test", "test-response",
         new AIUsage(100, 20, 120, 0.001m), 25);
     public Task<AICompletionResult> GetChatResponseAsync(IReadOnlyCollection<AIMessage> history,
-        CancellationToken cancellationToken = default, string? campaignContext = null)
+        CancellationToken cancellationToken = default, string? campaignContext = null, CampaignToolScope? toolScope = null)
     { LastContext = campaignContext; return Task.FromResult(Completion); }
     public async IAsyncEnumerable<AIStreamEvent> StreamChatResponseAsync(IReadOnlyCollection<AIMessage> history,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default, string? campaignContext = null)
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default, string? campaignContext = null, CampaignToolScope? toolScope = null)
     {
         LastContext = campaignContext;
         await Task.Yield();

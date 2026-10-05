@@ -15,6 +15,7 @@ using OpenAI.Responses;
 using OpenAI.Embeddings;
 using OpenAI.Audio;
 using System.Text;
+using ModelContextProtocol.AspNetCore;
 
 var seedDevelopmentDm = args.Contains("--seed-development-dm", StringComparer.Ordinal);
 var builder = WebApplication.CreateBuilder(args.Where(x => x != "--seed-development-dm").ToArray());
@@ -126,6 +127,10 @@ builder.Services.AddSingleton(new EmbeddingClient(
     builder.Configuration["OpenAI:EmbeddingModel"] ?? "text-embedding-3-small", openAiApiKey));
 builder.Services.AddScoped<IEmbeddingService, OpenAIEmbeddingService>();
 builder.Services.AddScoped<CampaignKnowledgeService>();
+builder.Services.AddScoped<CampaignToolService>();
+builder.Services.AddMcpServer()
+    .WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
+    .WithTools<CampaignMcpTools>();
 builder.Services.AddSingleton(new AudioClient(
     builder.Configuration["OpenAI:TranscriptionModel"] ?? "gpt-transcribe", openAiApiKey));
 builder.Services.AddScoped<IAudioTranscriptionService, OpenAIAudioTranscriptionService>();
@@ -252,6 +257,7 @@ app.UseAuthorization();
 app.UseRateLimiter();
 
 app.MapControllers();
+app.MapMcp("/mcp").RequireAuthorization().RequireRateLimiting("ai");
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }))
     .AllowAnonymous();

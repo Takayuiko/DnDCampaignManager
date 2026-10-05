@@ -8,9 +8,9 @@ public interface IAIService
 
     Task<AICompletionResult> GetChatResponseAsync(
         IReadOnlyCollection<AIMessage> history,
-        CancellationToken cancellationToken = default, string? campaignContext = null);
+        CancellationToken cancellationToken = default, string? campaignContext = null, CampaignToolScope? toolScope = null);
 
     IAsyncEnumerable<AIStreamEvent> StreamChatResponseAsync(
         IReadOnlyCollection<AIMessage> history,
-        CancellationToken cancellationToken = default, string? campaignContext = null);
+        CancellationToken cancellationToken = default, string? campaignContext = null, CampaignToolScope? toolScope = null);
 }

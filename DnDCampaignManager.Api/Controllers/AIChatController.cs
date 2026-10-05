@@ -185,7 +185,7 @@ public class AIChatController : ControllerBase
         try
         {
             var context = await BuildContextAsync(conversation, userId, request.Message, cancellationToken);
-            var completion = await _aiService.GetChatResponseAsync(history, cancellationToken, context?.Prompt);
+            var completion = await _aiService.GetChatResponseAsync(history, cancellationToken, context?.Prompt, new CampaignToolScope(userId, conversation.CampaignId!.Value));
             stopwatch.Stop();
 
             var assistantMessage = CreateAssistantMessage(conversationId, completion);
@@ -261,7 +261,7 @@ public class AIChatController : ControllerBase
         try
         {
             var context = await BuildContextAsync(conversation, userId, request.Message, cancellationToken);
-            await foreach (var update in _aiService.StreamChatResponseAsync(history, cancellationToken, context?.Prompt))
+            await foreach (var update in _aiService.StreamChatResponseAsync(history, cancellationToken, context?.Prompt, new CampaignToolScope(userId, conversation.CampaignId!.Value)))
             {
                 if (update.Type == "token" && update.Text is not null)
                 {
