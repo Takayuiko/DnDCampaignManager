@@ -34,24 +34,29 @@ jobs:
         working-directory: DnDCampaignManager.web
         run: npm run build
 
-      - name: Copy frontend dist -> API wwwroot
+      - name: Verify frontend output
+        shell: pwsh
         run: |
-          $wwwroot = "DnDCampaignManager.Api/wwwroot"
-          if (!(Test-Path $wwwroot)) { New-Item -ItemType Directory -Path $wwwroot | Out-Null }
-          
-          # Clean wwwroot
-          Get-ChildItem -Path $wwwroot -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-
-          # Copy dist into wwwroot
-          Copy-Item -Path "DnDCampaignManager.web/dist/*" -Destination $wwwroot -Recurse -Force
-
-          # Sanity check
-          Write-Host "=== wwwroot contents ==="
-          Get-ChildItem -Path $wwwroot -Recurse | Select-Object FullName
+          if (!(Test-Path -LiteralPath "DnDCampaignManager.Api/wwwroot/index.html" -PathType Leaf)) {
+            throw "Frontend build did not produce API wwwroot/index.html."
+          }
+          if (!(Get-ChildItem -LiteralPath "DnDCampaignManager.Api/wwwroot/assets" -Filter "*.js" -File)) {
+            throw "Frontend build did not produce JavaScript assets."
+          }
 
       # IMPORTANT: publish AFTER wwwroot is populated
       - name: Publish API
         run: dotnet publish DnDCampaignManager.Api/DnDCampaignManager.Api.csproj -c Release -o ./publish
+
+      - name: Verify published frontend
+        shell: pwsh
+        run: |
+          if (!(Test-Path -LiteralPath "publish/wwwroot/index.html" -PathType Leaf)) {
+            throw "Published API is missing the frontend index.html."
+          }
+          if (!(Get-ChildItem -LiteralPath "publish/wwwroot/assets" -Filter "*.js" -File)) {
+            throw "Published API is missing frontend JavaScript assets."
+          }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
