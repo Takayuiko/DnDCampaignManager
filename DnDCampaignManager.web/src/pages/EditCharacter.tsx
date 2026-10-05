@@ -3,8 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { getCharacter, updateCharacterByCampaign } from "../api/campaignApi";
 import CharacterSheetForm, {
     type CharacterForm,
-    type CharacterSkill,
-    type CharacterOptionsPayload
+    type CharacterSkill
 } from "../components/Character/CharacterSheetForm";
 import Button from "../components/UI/Button";
 import { extractApiError } from "../Utils/apiError";
@@ -95,8 +94,6 @@ export default function EditCharacter() {
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const [initialOptions, setInitialOptions] = useState<CharacterOptionsPayload | null>(null);
-
     const topRight = useMemo(
         () => (
             <Button variant="subtle" type="button" onClick={() => navigate("/dashboard")}>
@@ -115,25 +112,24 @@ export default function EditCharacter() {
             try {
                 const res = await getCharacter(cid, chid);
 
-                const characterx = res.data.character;
-                const options = res.data.options;
+                const character = res.data;
 
                 setForm({
                     ...emptyForm,
-                    characterx,
+                    ...character,
                     campaignId: cid,
-                    ...res.data,
                     skills:
-                        Array.isArray(res.data?.character.skills) && res.data.character.skills.length > 0
-                            ? res.data.character.skills
+                        Array.isArray(character.skills) && character.skills.length > 0
+                            ? character.skills
                             : emptyForm.skills,
                     hitDice: {
                         ...emptyForm.hitDice,
-                        ...(res.data?.character.hitDice ?? {}),
+                        ...(character.hitDice ?? {}),
                     },
-                    attacks: Array.isArray(res.data?.character.attacks) ? res.data.character.attacks : [],
+                    attacks: Array.isArray(character.attacks)
+                        ? character.attacks.map(attack => ({ ...attack, clientId: crypto.randomUUID() }))
+                        : [],
                 });
-                setInitialOptions(options);
             } catch (err: any) {
                 alert(err?.response?.data ?? "Character not found");
                 navigate("/dashboard");
@@ -175,7 +171,6 @@ export default function EditCharacter() {
             submitLabel="Save Character"
             submitting={submitting}
             error={error}
-            initialOptions={initialOptions}
         />
     );
 }

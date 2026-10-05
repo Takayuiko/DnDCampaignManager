@@ -174,29 +174,31 @@ export async function streamAIMessage(
     conversationId: string,
     message: string,
     onToken: (text: string) => void
-) {
-    let doneEvent: StreamDoneEvent | null = null;
-    let streamError: string | null = null;
+) : Promise<StreamDoneEvent> {
+    const result: { doneEvent: StreamDoneEvent | null; error: string | null } = {
+        doneEvent: null,
+        error: null
+    };
 
     await fetchStream(
         conversationId,
         message,
         onToken,
         event => {
-            doneEvent = event;
+            result.doneEvent = event;
         },
         error => {
-            streamError = error;
+            result.error = error;
         }
     );
 
-    if (streamError) {
-        throw new Error(streamError);
+    if (result.error) {
+        throw new Error(result.error);
     }
 
-    if (!doneEvent) {
+    if (!result.doneEvent) {
         throw new Error("The AI stream ended before a completion was received.");
     }
 
-    return doneEvent;
+    return result.doneEvent;
 }
