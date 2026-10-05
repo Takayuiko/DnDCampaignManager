@@ -42,4 +42,4 @@ Get-Content -LiteralPath $sqlFile -Raw | docker compose -f $composeFile exec -T 
 if ($LASTEXITCODE -ne 0) {
     throw 'DM setup failed. Ensure Docker PostgreSQL is running and the account is registered.'
 }
-Write-Host 'Development DM setup complete. Sign out and sign in again to refresh your role.'
+Write-Host 'Development DM setup complete. hagges02@gmail.com also receives admin access. Apply pending migrations before the promotion-only script. Sign out and sign in again.'

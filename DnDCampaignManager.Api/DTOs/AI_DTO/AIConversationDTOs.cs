@@ -1,13 +1,14 @@
 namespace DnDCampaignManager.Api.DTOs.AI_DTO;
 
-public sealed record CreateConversationRequest(string? Title);
+public sealed record CreateConversationRequest(string? Title, int? CampaignId = null);
 
 public sealed record ConversationSummaryDto(
     Guid Id,
     string Title,
     DateTime CreatedAtUtc,
     DateTime UpdatedAtUtc,
-    int MessageCount);
+    int MessageCount,
+    int? CampaignId = null);
 
 public sealed record ConversationMessageDto(
     long Id,
@@ -20,14 +21,18 @@ public sealed record ConversationMessageDto(
     long TotalTokenCount,
     decimal EstimatedCostUsd,
     long DurationMs,
-    string Status);
+    string Status,
+    IReadOnlyList<KnowledgeSourceDto>? Sources = null,
+    int RetrievalInputTokens = 0,
+    string? RetrievalWarning = null);
 
 public sealed record ConversationDto(
     Guid Id,
     string Title,
     DateTime CreatedAtUtc,
     DateTime UpdatedAtUtc,
-    IReadOnlyList<ConversationMessageDto> Messages);
+    IReadOnlyList<ConversationMessageDto> Messages,
+    int? CampaignId = null);
 
 public sealed record SendMessageRequest(string Message);
 
@@ -42,4 +47,7 @@ public sealed record ChatResponse(
     string Model,
     Guid ConversationId,
     long MessageId,
-    AIUsageDto Usage);
+    AIUsageDto Usage,
+    IReadOnlyList<KnowledgeSourceDto>? Sources = null,
+    int RetrievalInputTokens = 0,
+    string? RetrievalWarning = null);

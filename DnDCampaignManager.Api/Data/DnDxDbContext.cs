@@ -22,9 +22,24 @@ namespace DnDCampingManager.Api.Data
         public DbSet<CharacterBackgroundOption> CharacterBackgroundOptions => Set<CharacterBackgroundOption>();
         public DbSet<AIConversation> AIConversations => Set<AIConversation>();
         public DbSet<AIMessage> AIMessages => Set<AIMessage>();
+        public DbSet<CampaignSessionNote> CampaignSessionNotes => Set<CampaignSessionNote>();
+        public DbSet<CampaignKnowledgeChunk> CampaignKnowledgeChunks => Set<CampaignKnowledgeChunk>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            modelBuilder.Entity<User>().ToTable(t => t.HasCheckConstraint("CK_Users_AdminMustBeDM", "NOT \"IsAdmin\" OR \"Role\" = 'DM'"));
+            modelBuilder.Entity<AIConversation>().HasIndex(x => new { x.UserId, x.CampaignId }).IsUnique();
+            modelBuilder.Entity<AIConversation>().HasOne(x => x.Campaign).WithMany()
+                .HasForeignKey(x => x.CampaignId).OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<CampaignSessionNote>().HasOne(x => x.Campaign).WithMany()
+                .HasForeignKey(x => x.CampaignId).OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<CampaignSessionNote>().HasIndex(x => new { x.CampaignId, x.SessionNumber });
+            modelBuilder.Entity<CampaignSessionNote>().Property(x => x.Title).HasMaxLength(160);
+            modelBuilder.Entity<CampaignKnowledgeChunk>().HasOne(x => x.SessionNote).WithMany(x => x.Chunks)
+                .HasForeignKey(x => x.SessionNoteId).OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<CampaignKnowledgeChunk>().HasIndex(x => new { x.SessionNoteId, x.Position }).IsUnique();
+            modelBuilder.Entity<CampaignKnowledgeChunk>().Property(x => x.Embedding).HasColumnType("real[]");
+            modelBuilder.Entity<AIMessage>().Property(x => x.SourcesJson).HasDefaultValue("[]");
             modelBuilder.Entity<User>()
                 .HasIndex(u => u.Email)
                 .IsUnique();

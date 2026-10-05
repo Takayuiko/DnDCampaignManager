@@ -4,6 +4,8 @@ public class AIConversation
 {
     public Guid Id { get; set; }
     public int UserId { get; set; }
+    public int? CampaignId { get; set; }
+    public DnDCampaignManager.Api.Models.Campaign? Campaign { get; set; }
     public string Title { get; set; } = "New AI Conversation";
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;

@@ -6,6 +6,16 @@ export type ConversationSummary = {
     createdAtUtc: string;
     updatedAtUtc: string;
     messageCount: number;
+    campaignId?: number | null;
+};
+
+export type KnowledgeSource = {
+    label: string;
+    sessionNoteId: number;
+    sessionNumber: number;
+    title: string;
+    excerpt: string;
+    score: number;
 };
 
 export type ConversationMessage = {
@@ -20,6 +30,9 @@ export type ConversationMessage = {
     estimatedCostUsd: number;
     durationMs: number;
     status: string;
+    sources?: KnowledgeSource[];
+    retrievalInputTokens?: number;
+    retrievalWarning?: string | null;
 };
 
 export type Conversation = {
@@ -28,6 +41,7 @@ export type Conversation = {
     createdAtUtc: string;
     updatedAtUtc: string;
     messages: ConversationMessage[];
+    campaignId?: number | null;
 };
 
 export type AIStatus = {
@@ -48,6 +62,11 @@ export type StreamDoneEvent = {
     messageId: number;
     model: string;
     usage: AIUsage;
+    durationMs: number;
+    reply: string;
+    sources?: KnowledgeSource[];
+    retrievalInputTokens?: number;
+    retrievalWarning?: string | null;
 };
 
 export async function getAIStatus() {
@@ -58,10 +77,15 @@ export async function getConversations() {
     return api.get<ConversationSummary[]>("/ai/conversations");
 }
 
-export async function createConversation(title?: string) {
+export async function createConversation(title?: string, campaignId?: number) {
     return api.post<ConversationSummary>("/ai/conversations", {
-        title: title ?? null
+        title: title ?? null,
+        campaignId: campaignId ?? null
     });
+}
+
+export async function getDefaultConversation() {
+    return api.post<ConversationSummary | undefined>("/ai/conversations/default");
 }
 
 export async function getConversation(conversationId: string) {
@@ -69,7 +93,7 @@ export async function getConversation(conversationId: string) {
 }
 
 export async function deleteConversation(conversationId: string) {
-    return api.delete(`/ai/conversations/${conversationId}`);
+    return api.delete<ConversationSummary | undefined>(`/ai/conversations/${conversationId}`);
 }
 
 async function fetchStream(
@@ -125,6 +149,7 @@ async function fetchStream(
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let terminal = false;
 
     const processEvent = (rawEvent: string) => {
         let eventName = "message";
@@ -145,9 +170,20 @@ async function fetchStream(
         if (eventName === "token") {
             onToken(payload.text ?? "");
         } else if (eventName === "done") {
+            if (!payload.usage ||
+                ![payload.usage.inputTokens, payload.usage.outputTokens, payload.usage.totalTokens,
+                    payload.usage.estimatedCostUsd, payload.durationMs].every(value =>
+                    typeof value === "number" && Number.isFinite(value) && value >= 0) ||
+                typeof payload.reply !== "string") {
+                onError("The AI response could not be completed. Please refresh the conversation.");
+                terminal = true;
+                return;
+            }
             onDone(payload as StreamDoneEvent);
+            terminal = true;
         } else if (eventName === "error") {
             onError(payload.error ?? "The AI request failed.");
+            terminal = true;
         }
     };
 
@@ -155,11 +191,17 @@ async function fetchStream(
         const { value, done } = await reader.read();
         buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
 
-        let separatorIndex = buffer.indexOf("\n\n");
-        while (separatorIndex >= 0) {
-            processEvent(buffer.slice(0, separatorIndex));
-            buffer = buffer.slice(separatorIndex + 2);
-            separatorIndex = buffer.indexOf("\n\n");
+        let separator = /\r?\n\r?\n/.exec(buffer);
+        while (separator) {
+            processEvent(buffer.slice(0, separator.index));
+            buffer = buffer.slice(separator.index + separator[0].length);
+            if (terminal) {
+                // Completion must not wait for network cleanup to enable the next turn.
+                void reader.cancel().catch(() => {});
+                reader.releaseLock();
+                return;
+            }
+            separator = /\r?\n\r?\n/.exec(buffer);
         }
 
         if (done) break;
@@ -168,6 +210,7 @@ async function fetchStream(
     if (buffer.trim()) {
         processEvent(buffer);
     }
+    reader.releaseLock();
 }
 
 export async function streamAIMessage(

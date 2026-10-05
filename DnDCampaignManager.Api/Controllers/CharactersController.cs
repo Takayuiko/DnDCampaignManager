@@ -193,7 +193,7 @@ namespace DnDCampaignManager.Api.Controllers
             if (character == null)
                 return NotFound();
 
-            var canEdit = (isDM && character.Campaign.OwnerId == userId) || (!isDM && character.UserId == userId);
+            var canEdit = (isDM && character.Campaign.OwnerId == userId) || character.UserId == userId;
             
             if (!canEdit)
                 return Forbid();
@@ -326,7 +326,7 @@ namespace DnDCampaignManager.Api.Controllers
             if (character == null)
                 return NotFound();
 
-            var canView = (isDM && character.Campaign.OwnerId == userId) || (!isDM && character.UserId == userId) || (isDM && character.UserId == userId);
+            var canView = (isDM && character.Campaign.OwnerId == userId) || character.UserId == userId;
 
             if (!canView)
                 return Forbid();

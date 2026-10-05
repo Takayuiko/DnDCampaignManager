@@ -14,6 +14,18 @@ using Microsoft.AspNetCore.Mvc.ModelBinding.Validation;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Routing;
+using DnDCampaignManager.Api.Models.AI;
+using DnDCampaignManager.Api.Services.AI;
+using DnDCampaignManager.Api.DTOs.AI_DTO;
+using Microsoft.Extensions.Logging.Abstractions;
+using System.Text;
+using DnDCampaignManager.Api.Services;
+using DnDCampingManager.Api.Services;
+using DnDCampingManager.Api.Options;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Options;
+using System.IdentityModel.Tokens.Jwt;
+using Microsoft.IdentityModel.Tokens;
 
 // Exercise MVC validation, which direct controller calls bypass.
 var services = new ServiceCollection();
@@ -30,6 +42,19 @@ foreach (var email in new[] { "player@example.test", "invalid-email", "" })
         throw new Exception("Invite email validation did not match expectations.");
 }
 Console.WriteLine("PASS: MVC record validation accepts valid email and rejects invalid or missing email");
+foreach (var noteRequest in new[]
+{
+    new CreateSessionNoteRequest(1, "Session", "The party found a key.", new DateOnly(2026, 10, 4)),
+    new CreateSessionNoteRequest(0, "", new string('x', 240001), new DateOnly(2026, 10, 4))
+})
+{
+    var actionContext = new ActionContext(new DefaultHttpContext { RequestServices = provider },
+        new RouteData(), new ActionDescriptor(), new ModelStateDictionary());
+    validator.Validate(actionContext, null, "", noteRequest);
+    if (actionContext.ModelState.IsValid != (noteRequest.SessionNumber == 1))
+        throw new Exception("Session-note record validation did not match expectations.");
+}
+Console.WriteLine("PASS: MVC session-note validation accepts valid input and rejects missing fields, invalid session number and oversized notes");
 
 var apiDirectory = Path.GetFullPath(args[0]);
 var configuration = new ConfigurationBuilder()
@@ -42,6 +67,7 @@ var configuration = new ConfigurationBuilder()
 var options = new DbContextOptionsBuilder<DnDxDbContext>()
     .UseNpgsql(configuration.GetConnectionString("DefaultConnection")).Options;
 await using var db = new DnDxDbContext(options);
+await db.Database.MigrateAsync();
 await using var transaction = await db.Database.BeginTransactionAsync();
 // All fixtures and membership/character changes are rolled back, even on failure.
 var suffix = Guid.NewGuid().ToString("N");
@@ -93,5 +119,370 @@ Check(await characters.CreateCharacter(first.Id, request) is BadRequestObjectRes
 Check(await characters.CreateCharacter(second.Id, request) is OkObjectResult, "Same user can create a different character in another campaign");
 characters.ControllerContext = Context(other);
 Check(await characters.CreateCharacter(first.Id, request) is OkObjectResult, "One campaign supports multiple players' characters");
+var editedCharacter = await db.Characters.SingleAsync(c => c.CampaignId == first.Id && c.UserId == player.Id);
+var hpUpdate = JsonSerializer.Deserialize<UpdateCharacterDto>("""
+{"Name":"Freya","Class":"Fighter","Race":"Human","Level":1,"Background":"Soldier","Alignment":"Neutral","Strength":10,"Dexterity":10,"Constitution":10,"Intelligence":10,"Wisdom":10,"Charisma":10,"ProficiencyBonus":2,"HitPointMax":10,"HitPointCurrent":7,"Skills":[],"SavingThrows":{}}
+""")!;
+characters.ControllerContext = Context(player);
+Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate) is NoContentResult && editedCharacter.HitPointCurrent == 7,
+    "Player can save their own character HP");
+var promotedCharacterOwner = Context(player);
+((ClaimsIdentity)promotedCharacterOwner.HttpContext.User.Identity!).AddClaim(new Claim(ClaimTypes.Role, Roles.DM));
+((ClaimsIdentity)promotedCharacterOwner.HttpContext.User.Identity!).AddClaim(new Claim(ClaimTypes.Role, Roles.Admin));
+characters.ControllerContext = promotedCharacterOwner;
+Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 6 }) is NoContentResult && editedCharacter.HitPointCurrent == 6,
+    "DM/admin can save their own character in another DM's campaign");
+characters.ControllerContext = Context(dm);
+Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 5 }) is NoContentResult && editedCharacter.HitPointCurrent == 5,
+    "Campaign DM can save a player's character HP");
+characters.ControllerContext = Context(other);
+Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate) is ForbidResult && editedCharacter.HitPointCurrent == 5,
+    "Another player cannot edit the character");
+((ClaimsIdentity)characters.User.Identity!).AddClaim(new Claim(ClaimTypes.Role, Roles.DM));
+((ClaimsIdentity)characters.User.Identity!).AddClaim(new Claim(ClaimTypes.Role, Roles.Admin));
+Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate) is ForbidResult && editedCharacter.HitPointCurrent == 5,
+    "Unrelated DM/admin cannot edit the character");
+Check(await characters.UpdateCharacter(second.Id, editedCharacter.Id, hpUpdate) is NotFoundResult,
+    "Character editing rejects a mismatched campaign route");
+var aiConversation = new AIConversation { Id = Guid.NewGuid(), UserId = player.Id, CampaignId = first.Id };
+db.AIConversations.Add(aiConversation);
+await db.SaveChangesAsync();
+var chatContext = Context(player);
+using var sseOutput = new MemoryStream();
+chatContext.HttpContext.Response.Body = sseOutput;
+var fakeEmbeddings = new FakeEmbeddings();
+var knowledge = new CampaignKnowledgeService(db, fakeEmbeddings, configuration, NullLogger<CampaignKnowledgeService>.Instance);
+var fakeAi = new FakeAIService();
+var chat = new AIChatController(db, fakeAi, configuration, NullLogger<AIChatController>.Instance, knowledge)
+    { ControllerContext = chatContext };
+var defaultResult = (await chat.GetOrCreateDefaultConversation(CancellationToken.None)).Result as OkObjectResult;
+var repeatedResult = (await chat.GetOrCreateDefaultConversation(CancellationToken.None)).Result as OkObjectResult;
+Check(defaultResult?.Value is ConversationSummaryDto original && repeatedResult?.Value is ConversationSummaryDto repeated &&
+    original.Id == repeated.Id && await db.AIConversations.CountAsync(x => x.UserId == player.Id) == 1,
+    "Repeated default initialization keeps exactly one conversation");
+await chat.StreamMessage(aiConversation.Id, new SendMessageRequest("Test"), CancellationToken.None);
+var frames = Encoding.UTF8.GetString(sseOutput.ToArray()).Split("\n\n");
+var completionFrame = frames.Single(x => x.StartsWith("event: done\n"));
+using var completionJson = JsonDocument.Parse(completionFrame.Split("data: ")[1]);
+var completionPayload = completionJson.RootElement;
+Check(completionPayload.GetProperty("usage").GetProperty("inputTokens").GetInt64() == 100 &&
+    completionPayload.GetProperty("usage").GetProperty("outputTokens").GetInt64() == 20 &&
+    completionPayload.GetProperty("usage").GetProperty("totalTokens").GetInt64() == 120,
+    "Actual SSE completion uses camelCase and correct usage counts");
+Check(completionPayload.GetProperty("durationMs").GetInt64() == 25 &&
+    completionPayload.GetProperty("reply").GetString() == "Hello",
+    "Actual SSE completion includes final text and duration");
+var persistedReply = await db.AIMessages.SingleAsync(x => x.ConversationId == aiConversation.Id && x.Role == "assistant");
+Check(persistedReply.TotalTokenCount == 120 && persistedReply.Content == "Hello",
+    "Saved reply retains the same usage and text as the stream");
+Check(await chat.DeleteConversation(aiConversation.Id, CancellationToken.None) is OkObjectResult &&
+    await db.AIConversations.CountAsync(x => x.UserId == player.Id) == 1 &&
+    !await db.AIMessages.AnyAsync(x => x.ConversationId == aiConversation.Id),
+    "Deleting the last conversation clears it while keeping one usable conversation");
+
+var legacyGeneral = new AIConversation { Id = Guid.NewGuid(), UserId = player.Id };
+db.AIConversations.Add(legacyGeneral);
+await db.SaveChangesAsync();
+Check((await chat.CreateConversation(new CreateConversationRequest(null), CancellationToken.None)).Result is BadRequestObjectResult,
+    "Players cannot create general chat by calling the API directly");
+Check((await chat.GetConversation(legacyGeneral.Id, CancellationToken.None)).Result is NotFoundResult &&
+    await chat.DeleteConversation(legacyGeneral.Id, CancellationToken.None) is NotFoundResult,
+    "Legacy general conversations are preserved but inaccessible to players");
+var playerList = (await chat.GetConversations(CancellationToken.None)).Result as OkObjectResult;
+Check(playerList?.Value is List<ConversationSummaryDto> playerChats && playerChats.All(x => x.CampaignId is not null),
+    "Players only see their authorized campaign conversations");
+Check((await chat.SendMessage(legacyGeneral.Id, new SendMessageRequest("Test"), CancellationToken.None)).Result is NotFoundObjectResult,
+    "Players cannot send nonstreaming messages to a general conversation");
+sseOutput.SetLength(0);
+await chat.StreamMessage(legacyGeneral.Id, new SendMessageRequest("Test"), CancellationToken.None);
+Check(chatContext.HttpContext.Response.StatusCode == 404 && !await db.AIMessages.AnyAsync(x => x.ConversationId == legacyGeneral.Id),
+    "Players cannot stream messages to a general conversation");
+chat.ControllerContext = Context(other);
+var otherDefault = (await chat.GetOrCreateDefaultConversation(CancellationToken.None)).Result as OkObjectResult;
+Check(otherDefault?.Value is ConversationSummaryDto { CampaignId: var autoCampaign } && autoCampaign == first.Id,
+    "Player initialization creates a default chat in a joined campaign");
+var noCampaignUser = new User { Email = $"no-campaign-{suffix}@example.test", Role = Roles.Player, PasswordHash = "unused-test-fixture" };
+db.Users.Add(noCampaignUser);
+await db.SaveChangesAsync();
+chat.ControllerContext = Context(noCampaignUser);
+Check((await chat.GetOrCreateDefaultConversation(CancellationToken.None)).Result is NoContentResult &&
+    !await db.AIConversations.AnyAsync(x => x.UserId == noCampaignUser.Id),
+    "Players without campaigns get an empty state without creating an unusable general chat");
+chat.ControllerContext = Context(dm);
+Check((await chat.CreateConversation(new CreateConversationRequest(null), CancellationToken.None)).Result is BadRequestObjectResult,
+    "DMs cannot create general chats");
+var dmCampaign = (await chat.CreateConversation(new CreateConversationRequest(null, first.Id), CancellationToken.None)).Result as OkObjectResult;
+var dmRepeated = (await chat.CreateConversation(new CreateConversationRequest(null, first.Id), CancellationToken.None)).Result as OkObjectResult;
+Check(dmCampaign?.Value is ConversationSummaryDto dmChat && dmRepeated?.Value is ConversationSummaryDto sameDmChat && dmChat.Id == sameDmChat.Id,
+    "Repeated creation returns one personal DM chat for the selected campaign");
+var secondDmResult = (await chat.CreateConversation(new CreateConversationRequest(null, second.Id), CancellationToken.None)).Result as OkObjectResult;
+var firstDmSummary = (ConversationSummaryDto)dmCampaign!.Value!;
+Check(secondDmResult?.Value is ConversationSummaryDto secondDmSummary && secondDmSummary.Id != firstDmSummary.Id && secondDmSummary.CampaignId == second.Id,
+    "Different campaigns get separate personal chats");
+Check(await chat.DeleteConversation(firstDmSummary.Id, CancellationToken.None) is OkObjectResult &&
+    await db.AIConversations.CountAsync(x => x.UserId == dm.Id && x.CampaignId != null) == 2,
+    "Clearing one campaign chat preserves both campaign conversations");
+Check((await chat.GetConversation(legacyGeneral.Id, CancellationToken.None)).Result is NotFoundResult,
+    "General chats are unavailable to DMs too");
+chat.ControllerContext = chatContext;
+
+// Real database, indexing and retrieval; fake provider responses avoid cost and nondeterministic network calls.
+var sessions = new CampaignSessionNotesController(db, knowledge) { ControllerContext = Context(dm) };
+var sessionRequest = new CreateSessionNoteRequest(1, "The silver key", "Freya found a silver key beneath the ruined tower.", new DateOnly(2026, 10, 4));
+fakeEmbeddings.Fail = true;
+var failedIndex = await sessions.Create(first.Id, sessionRequest, CancellationToken.None) as OkObjectResult;
+Check(failedIndex?.Value is SessionNoteDto { IndexStatus: "failed", ChunkCount: 0 }, "Provider failure preserves the original session notes with retry status");
+var firstNoteId = ((SessionNoteDto)failedIndex!.Value!).Id;
+Check((await sessions.List(first.Id, CancellationToken.None) as OkObjectResult)?.Value is List<SessionNoteDto> saved &&
+    saved.Any(n => n.Id == firstNoteId && n.Content == sessionRequest.Content), "Saved notes remain readable after indexing fails");
+fakeEmbeddings.Fail = false;
+Check(await sessions.RetryIndex(first.Id, firstNoteId, CancellationToken.None) is OkObjectResult { Value: SessionNoteDto { IndexStatus: "ready", ChunkCount: 1 } },
+    "Retry creates a searchable index");
+await sessions.RetryIndex(first.Id, firstNoteId, CancellationToken.None);
+Check(await db.CampaignKnowledgeChunks.CountAsync(x => x.SessionNoteId == firstNoteId) == 1, "Repeated indexing replaces chunks without duplicates");
+var unrelated = await sessions.Create(second.Id, new CreateSessionNoteRequest(1, "Secret other campaign", "A silver key opened the hidden dragon vault.", new DateOnly(2026, 10, 4)), CancellationToken.None);
+var unrelatedId = ((SessionNoteDto)((OkObjectResult)unrelated).Value!).Id;
+await sessions.Create(first.Id, new CreateSessionNoteRequest(2, "The orchard", "The villagers harvested apples.", new DateOnly(2026, 10, 4)), CancellationToken.None);
+sessions.ControllerContext = Context(player);
+Check(await sessions.Create(first.Id, sessionRequest, CancellationToken.None) is NotFoundResult, "Players cannot write notes or pay for indexing");
+Check(await sessions.RetryIndex(first.Id, firstNoteId, CancellationToken.None) is NotFoundResult, "Players cannot reindex DM notes");
+Check(await sessions.List(first.Id, CancellationToken.None) is OkObjectResult, "Campaign members can read shared session notes");
+Check(await sessions.List(second.Id, CancellationToken.None) is OkObjectResult, "Membership permits independent access to a second campaign");
+sessions.ControllerContext = Context(other);
+Check(await sessions.List(second.Id, CancellationToken.None) is NotFoundResult, "Nonmembers cannot read another campaign's notes");
+var retrievedContext = await knowledge.BuildContextAsync(first.Id, player.Id, "Where was the silver key found?", CancellationToken.None);
+Check(retrievedContext.Sources.Count == 1 && retrievedContext.Sources[0].SessionNoteId == firstNoteId && !retrievedContext.Prompt.Contains("dragon vault"),
+    "Retrieval ranks relevant passages and excludes every other campaign even for a member of both");
+Check(retrievedContext.Prompt.Contains("Freya") && retrievedContext.Prompt.Contains("HitPointCurrent") && !retrievedContext.Prompt.Contains(player.Email) &&
+    !retrievedContext.Prompt.Contains("PasswordHash"), "Live character facts are included without authentication or account data");
+var currentCharacter = await db.Characters.FirstAsync(x => x.CampaignId == first.Id && x.UserId == player.Id);
+currentCharacter.HitPointCurrent = 7;
+await db.SaveChangesAsync();
+var fresh = await knowledge.BuildContextAsync(first.Id, player.Id, "Where was the silver key found?", CancellationToken.None);
+Check(fresh.Prompt.Contains("\"HitPointCurrent\":7"), "Character edits are available immediately without re-embedding");
+var emptySearch = await knowledge.BuildContextAsync(first.Id, player.Id, "Tell me about the sea.", CancellationToken.None);
+Check(emptySearch.Sources.Count == 0 && emptySearch.Prompt.Contains("No relevant session passages"), "Low similarity produces an explicit no-evidence result");
+fakeEmbeddings.Fail = true;
+var unavailable = await knowledge.BuildContextAsync(first.Id, player.Id, "silver key", CancellationToken.None);
+Check(unavailable.Sources.Count == 0 && unavailable.Warning is not null && unavailable.Prompt.Contains("Freya") && !unavailable.Warning.Contains("stack"),
+    "Search failures preserve current facts and return a simple warning");
+fakeEmbeddings.Fail = false;
+var firstNote = await db.CampaignSessionNotes.SingleAsync(n => n.Id == firstNoteId);
+firstNote.EmbeddingModel = "old-model";
+await db.SaveChangesAsync();
+var incompatible = await knowledge.BuildContextAsync(first.Id, player.Id, "silver key", CancellationToken.None);
+Check(incompatible.Sources.Count == 0 && incompatible.Warning is not null,
+    "Embeddings from an incompatible model are excluded and prompt the DM to reindex");
+firstNote.EmbeddingModel = fakeEmbeddings.Model;
+await db.SaveChangesAsync();
+var denied = false;
+try { await knowledge.BuildContextAsync(second.Id, other.Id, "silver key", CancellationToken.None); }
+catch (UnauthorizedAccessException) { denied = true; }
+Check(denied, "Retrieval independently enforces campaign access");
+chat.ControllerContext = Context(other);
+Check((await chat.CreateConversation(new CreateConversationRequest(null, second.Id), CancellationToken.None)).Result is NotFoundObjectResult,
+    "Nonmembers cannot create chat scoped to another campaign");
+chat.ControllerContext = chatContext;
+var scopedResult = (await chat.CreateConversation(new CreateConversationRequest(null, first.Id), CancellationToken.None)).Result as OkObjectResult;
+var scoped = (ConversationSummaryDto)scopedResult!.Value!;
+Check(scoped.CampaignId == first.Id, "Campaign association is fixed when a conversation is created");
+sseOutput.SetLength(0);
+await chat.StreamMessage(scoped.Id, new SendMessageRequest("Where was the silver key found?"), CancellationToken.None);
+Check(fakeAi.LastContext?.Contains("silver key beneath the ruined tower") == true && !fakeAi.LastContext.Contains("dragon vault"),
+    "The existing streaming chat receives the authorized retrieved context");
+var scopedReply = await db.AIMessages.SingleAsync(x => x.ConversationId == scoped.Id && x.Role == "assistant");
+var reloaded = (await chat.GetConversation(scoped.Id, CancellationToken.None)).Result as OkObjectResult;
+Check(scopedReply.RetrievalInputTokens == 5 && reloaded?.Value is ConversationDto reload &&
+    reload.CampaignId == first.Id && reload.Messages.Single(m => m.Role == "assistant").Sources?.Single().SessionNoteId == firstNoteId,
+    "Source snapshots and separately billed retrieval tokens survive conversation reload");
+var membership = await db.CampaignPlayer.SingleAsync(x => x.CampaignId == first.Id && x.UserId == player.Id);
+db.CampaignPlayer.Remove(membership);
+await db.SaveChangesAsync();
+Check((await chat.GetConversation(scoped.Id, CancellationToken.None)).Result is NotFoundResult, "Revoked membership prevents reading campaign conversations");
+sseOutput.SetLength(0);
+await chat.StreamMessage(scoped.Id, new SendMessageRequest("silver key"), CancellationToken.None);
+Check(chatContext.HttpContext.Response.StatusCode == 404, "Revoked membership prevents additional campaign chat requests");
+sessions.ControllerContext = Context(dm);
+Check(await sessions.Delete(first.Id, unrelatedId, CancellationToken.None) is NotFoundResult, "A note cannot be deleted using another campaign's route");
+Check(await sessions.Delete(first.Id, firstNoteId, CancellationToken.None) is NoContentResult &&
+    !await db.CampaignKnowledgeChunks.AnyAsync(x => x.SessionNoteId == firstNoteId), "Deleting a note also deletes its derived index");
+Check(JsonSerializer.Deserialize<List<KnowledgeSourceDto>>(scopedReply.SourcesJson)!.Single().SessionNoteId == firstNoteId,
+    "Historical reply evidence remains after source deletion");
+var fakeAudio = new FakeAudioTranscription();
+var audioController = new SessionAudioController(knowledge, fakeAudio, NullLogger<SessionAudioController>.Instance)
+    { ControllerContext = Context(dm) };
+using var audioBytes = new MemoryStream(new byte[] { 1, 2, 3 });
+SessionAudioUpload AudioFile(string name, long length = 3) => new() { Audio = new FormFile(audioBytes, 0, length, "audio", name) };
+Check(await audioController.Transcribe(first.Id, AudioFile("recording.exe"), CancellationToken.None) is BadRequestObjectResult &&
+    await audioController.Transcribe(first.Id, AudioFile("recording.mp3", 25000001), CancellationToken.None) is BadRequestObjectResult &&
+    await audioController.Transcribe(first.Id, AudioFile("recording.mp3", 0), CancellationToken.None) is BadRequestObjectResult && fakeAudio.Calls == 0,
+    "Invalid audio formats, oversized files and empty files are rejected before provider calls");
+audioController.ControllerContext = Context(player);
+Check(await audioController.Transcribe(first.Id, AudioFile("recording.mp3"), CancellationToken.None) is NotFoundResult && fakeAudio.Calls == 0,
+    "Players cannot transcribe campaign audio");
+audioController.ControllerContext = Context(other);
+Check(await audioController.Transcribe(second.Id, AudioFile("recording.mp3"), CancellationToken.None) is NotFoundResult,
+    "Nonowners cannot transcribe another campaign's audio");
+audioController.ControllerContext = Context(dm);
+fakeAudio.Fail = true;
+Check(await audioController.Transcribe(first.Id, AudioFile("recording.mp3"), CancellationToken.None) is ObjectResult { StatusCode: 502, Value: string safeError } &&
+    !safeError.Contains("diagnostic"), "Transcription failures return a simple error without provider diagnostics");
+fakeAudio.Fail = false;
+var noteCountBeforeAudio = await db.CampaignSessionNotes.CountAsync(x => x.CampaignId == first.Id);
+var transcriptionResult = await audioController.Transcribe(first.Id, AudioFile("../../recording.MP3"), CancellationToken.None) as OkObjectResult;
+Check(transcriptionResult?.Value is SessionTranscriptDto && fakeAudio.LastFileName == "session.mp3" &&
+    await db.CampaignSessionNotes.CountAsync(x => x.CampaignId == first.Id) == noteCountBeforeAudio,
+    "Audio produces a reviewable transcript without saving unapproved knowledge or using uploaded filesystem paths");
+var transcript = ((SessionTranscriptDto)transcriptionResult!.Value!).Text;
+var approvedAudioNote = await sessions.Create(first.Id, new CreateSessionNoteRequest(3, "Recorded session", transcript, new DateOnly(2026, 10, 4)), CancellationToken.None)
+    as OkObjectResult;
+var approvedId = ((SessionNoteDto)approvedAudioNote!.Value!).Id;
+var audioContext = await knowledge.BuildContextAsync(first.Id, dm.Id, "silver key", CancellationToken.None);
+Check(audioContext.Sources.Any(s => s.SessionNoteId == approvedId && s.Excerpt.Contains("recorded session")),
+    "Approved audio transcripts flow through the existing session index and RAG retrieval");
+fakeEmbeddings.BatchSizes.Clear();
+var longAudioNote = await sessions.Create(first.Id, new CreateSessionNoteRequest(4, "Long recording", new string('a', 35000), new DateOnly(2026, 10, 4)), CancellationToken.None)
+    as OkObjectResult;
+Check(longAudioNote?.Value is SessionNoteDto { IndexStatus: "ready", ChunkCount: > 32 } longNote &&
+    fakeEmbeddings.BatchSizes.Count > 1 && fakeEmbeddings.BatchSizes.All(size => size <= 32) &&
+    longNote.EmbeddingInputTokens == longNote.ChunkCount * 5,
+    "Long transcripts index in bounded batches and retain total embedding usage");
+Check(KnowledgeText.Cosine([1, 0], [1, 0]) == 1 && KnowledgeText.Cosine([1, 0], [0, 1]) == 0 &&
+    KnowledgeText.Cosine([float.NaN], [1]) == -1 && KnowledgeText.Cosine([0], [0]) == -1,
+    "Cosine scoring handles matching, unrelated and invalid vectors");
+var longText = string.Concat(Enumerable.Repeat("A clue 🐉 at the tower. ", 100));
+var passages = KnowledgeText.Chunk(longText);
+Check(passages.Count > 1 && passages.All(x => x.Length <= 1000 && !char.IsLowSurrogate(x[0]) && !char.IsHighSurrogate(x[^1])) &&
+    passages[0][^150..] == passages[1][..150], "Chunking preserves overlap and Unicode boundaries");
+// DM rights management and destructive cleanup use only rolled-back fixtures.
+var admin = new User { Email = $"admin-{suffix}@example.test", Role = Roles.DM, IsAdmin = true, PasswordHash = "unused" };
+db.Users.Add(admin);
+await db.SaveChangesAsync();
+var management = new DungeonMasterManagementService(db);
+async Task<bool> Rejected(Func<Task> operation, int status)
+{
+    try { await operation(); return false; }
+    catch (DmManagementException ex) { return ex.Status == status; }
+}
+Check(await Rejected(async () => { await management.ListAsync(dm.Id, CancellationToken.None); }, 403) &&
+    await Rejected(async () => { await management.PromoteAsync(player.Id, other.Email, CancellationToken.None); }, 403),
+    "Ordinary DMs and players cannot administer DM rights");
+Check(await Rejected(async () => { await management.PromoteAsync(admin.Id, $"missing-admin-{suffix}@example.test", CancellationToken.None); }, 404),
+    "Admin promotion rejects unregistered users");
+var hashBeforePromotion = other.PasswordHash;
+var promoted = await management.PromoteAsync(admin.Id, " " + other.Email.ToUpperInvariant() + " ", CancellationToken.None);
+Check(promoted.Role == Roles.DM && !promoted.IsAdmin && other.PasswordHash == hashBeforePromotion,
+    "Admin promotes an existing user with case-insensitive lookup without granting admin or changing credentials");
+var versionAfterPromotion = other.TokenVersion;
+await management.PromoteAsync(admin.Id, other.Email, CancellationToken.None);
+Check(other.TokenVersion == versionAfterPromotion, "Repeated DM promotion is idempotent");
+Check((await management.ListAsync(admin.Id, CancellationToken.None)).Any(u => u.Id == other.Id), "Admin can read the current DM roster");
+Check(await Rejected(async () => { await management.PreviewAsync(admin.Id, admin.Id, CancellationToken.None); }, 409) &&
+    await Rejected(() => management.RemoveAsync(admin.Id, admin.Id, 0, CancellationToken.None), 409),
+    "The seeded administrator cannot demote itself");
+var dmOwned = new Campaign { OwnerId = other.Id, Name = "DM cleanup fixture", Description = "Temporary" };
+db.Campaigns.Add(dmOwned);
+await db.SaveChangesAsync();
+db.CampaignPlayer.Add(new CampaignPlayer { CampaignId = dmOwned.Id, UserId = player.Id });
+db.Characters.Add(new Character { CampaignId = dmOwned.Id, UserId = player.Id, Name = "Cleanup character", Class = "Fighter", Race = "Human", Background = "Soldier", Alignment = "Neutral" });
+db.CharacterClassOptions.Add(new CharacterClassOption { CampaignId = dmOwned.Id, UserId = other.Id, Name = "Cleanup class", NormalizedName = "CLEANUP CLASS" });
+db.CharacterRaceOptions.Add(new CharacterRaceOption { CampaignId = dmOwned.Id, UserId = other.Id, Name = "Cleanup race", NormalizedName = "CLEANUP RACE" });
+db.CharacterBackgroundOptions.Add(new CharacterBackgroundOption { CampaignId = dmOwned.Id, UserId = other.Id, Name = "Cleanup background", NormalizedName = "CLEANUP BACKGROUND" });
+var cleanupGeneral = new AIConversation { Id = Guid.NewGuid(), UserId = other.Id };
+var memberChat = new AIConversation { Id = Guid.NewGuid(), UserId = player.Id, CampaignId = dmOwned.Id };
+db.AIConversations.AddRange(cleanupGeneral, memberChat);
+db.AIMessages.Add(new AIMessage { ConversationId = memberChat.Id, Role = "assistant", Content = "Campaign secret" });
+await db.SaveChangesAsync();
+sessions.ControllerContext = Context(other);
+var cleanupNote = (SessionNoteDto)((OkObjectResult)await sessions.Create(dmOwned.Id,
+    new CreateSessionNoteRequest(1, "Cleanup session", "A silver key", new DateOnly(2026, 10, 4)), CancellationToken.None)).Value!;
+var preservedCharacter = await db.Characters.SingleAsync(c => c.UserId == other.Id && c.CampaignId == first.Id);
+var preservedMemberships = await db.CampaignPlayer.CountAsync(p => p.UserId == other.Id && p.CampaignId == first.Id);
+var previewRemoval = await management.PreviewAsync(admin.Id, other.Id, CancellationToken.None);
+Check(previewRemoval.CampaignCount == 1 && previewRemoval.CharacterCount == 1 && previewRemoval.SessionNoteCount == 1 &&
+    previewRemoval.CampaignConversationCount == 1 && previewRemoval.GeneralConversationCount == 1 && previewRemoval.PreservedCharacterCount == 1,
+    "Cleanup preview counts deleted campaign data and preserved player characters");
+Check(await Rejected(() => management.RemoveAsync(admin.Id, other.Id, 0, CancellationToken.None), 409) &&
+    await db.Campaigns.AnyAsync(c => c.Id == dmOwned.Id), "A stale cleanup preview rejects removal without deleting data");
+
+var testKey = new string('x', 64);
+var jwtService = new JwtService(Options.Create(new JwtOptions { Issuer = "test", Audience = "test", SigningKeys = [new JwtSigningKey { Kid = "test", Key = testKey }] }));
+ClaimsPrincipal TokenPrincipal(User account) => new JwtSecurityTokenHandler().ValidateToken(jwtService.GenerateToken(account),
+    new TokenValidationParameters { ValidIssuer = "test", ValidAudience = "test", IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(testKey)), ClockSkew = TimeSpan.Zero }, out _);
+var tokenValidator = new CurrentTokenValidator(db);
+var oldDmPrincipal = TokenPrincipal(other);
+Check(await tokenValidator.IsCurrentAsync(oldDmPrincipal, CancellationToken.None) && TokenPrincipal(admin).IsInRole(Roles.Admin) &&
+    TokenPrincipal(admin).IsInRole(Roles.DM), "Real JWTs carry current token versions and admins retain both DM and Admin claims");
+db.RefreshTokens.Add(new RefreshToken { UserId = other.Id, Token = Guid.NewGuid().ToString(), ExpiresAt = DateTime.UtcNow.AddDays(1) });
+await db.SaveChangesAsync();
+await management.RemoveAsync(admin.Id, other.Id, 1, CancellationToken.None);
+Check(other.Role == Roles.Player && !other.IsAdmin && other.PasswordHash == hashBeforePromotion &&
+    !await db.Campaigns.AnyAsync(c => c.OwnerId == other.Id), "DM removal preserves the account as a player and deletes owned campaigns");
+Check(!await db.Characters.AnyAsync(c => c.CampaignId == dmOwned.Id) && !await db.CampaignPlayer.AnyAsync(c => c.CampaignId == dmOwned.Id) &&
+    !await db.CharacterClassOptions.AnyAsync(c => c.CampaignId == dmOwned.Id) && !await db.CharacterRaceOptions.AnyAsync(c => c.CampaignId == dmOwned.Id) &&
+    !await db.CharacterBackgroundOptions.AnyAsync(c => c.CampaignId == dmOwned.Id), "DM cleanup cascades to all owned-campaign characters, members and custom options");
+Check(!await db.CampaignSessionNotes.AnyAsync(n => n.CampaignId == dmOwned.Id) && !await db.CampaignKnowledgeChunks.AnyAsync(c => c.SessionNoteId == cleanupNote.Id) &&
+    !await db.AIConversations.AnyAsync(c => c.CampaignId == dmOwned.Id || c.Id == cleanupGeneral.Id) && !await db.AIMessages.AnyAsync(m => m.ConversationId == memberChat.Id),
+    "DM cleanup removes session knowledge and all users' owned-campaign chats plus the former DM's general chat");
+Check(await db.Characters.AnyAsync(c => c.Id == preservedCharacter.Id) &&
+    await db.CampaignPlayer.CountAsync(p => p.UserId == other.Id && p.CampaignId == first.Id) == preservedMemberships &&
+    await db.AIConversations.AnyAsync(c => c.UserId == other.Id && c.CampaignId == first.Id),
+    "The former DM retains player characters, memberships and personal player chats in other campaigns");
+Check(!await tokenValidator.IsCurrentAsync(oldDmPrincipal, CancellationToken.None) && !await db.RefreshTokens.AnyAsync(t => t.UserId == other.Id),
+    "Demotion immediately invalidates previous access and refresh tokens");
+Check(await tokenValidator.IsCurrentAsync(TokenPrincipal(other), CancellationToken.None), "A fresh player login token remains valid after demotion");
+var lateCreation = new CampaignsController(db) { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = oldDmPrincipal } } };
+Check((await lateCreation.CreateCampaign(new CreateCampaignDto("Late campaign", "Should not be created", other.Id))).Result is ForbidResult,
+    "A request carrying the former DM claim cannot recreate an owned campaign after cleanup");
 await transaction.RollbackAsync();
 Console.WriteLine("All membership checks passed; all test data rolled back.");
+
+sealed class FakeAIService : IAIService
+{
+    public string? LastContext { get; private set; }
+    public string Model => "test";
+    private static AICompletionResult Completion => new("Hello", "test", "test-response",
+        new AIUsage(100, 20, 120, 0.001m), 25);
+    public Task<AICompletionResult> GetChatResponseAsync(IReadOnlyCollection<AIMessage> history,
+        CancellationToken cancellationToken = default, string? campaignContext = null)
+    { LastContext = campaignContext; return Task.FromResult(Completion); }
+    public async IAsyncEnumerable<AIStreamEvent> StreamChatResponseAsync(IReadOnlyCollection<AIMessage> history,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default, string? campaignContext = null)
+    {
+        LastContext = campaignContext;
+        await Task.Yield();
+        yield return new AIStreamEvent("token", "Hello");
+        yield return new AIStreamEvent("completed", Completion: Completion);
+    }
+}
+
+sealed class FakeEmbeddings : IEmbeddingService
+{
+    public List<int> BatchSizes { get; } = [];
+    public string Model => "test-embedding";
+    public int Dimensions => 3;
+    public bool Fail { get; set; }
+    public Task<EmbeddingBatch> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken cancellationToken)
+    {
+        BatchSizes.Add(inputs.Count);
+        if (Fail) throw new InvalidOperationException("Provider stack diagnostics must never reach the interface.");
+        var vectors = inputs.Select(text => text.Contains("silver key", StringComparison.OrdinalIgnoreCase) ? new float[] { 1, 0, 0 }
+            : text.Contains("apple", StringComparison.OrdinalIgnoreCase) ? new float[] { 0, 1, 0 } : new float[] { 0, 0, 1 }).ToArray();
+        return Task.FromResult(new EmbeddingBatch(vectors, 5 * inputs.Count));
+    }
+}
+
+sealed class FakeAudioTranscription : IAudioTranscriptionService
+{
+    public string Model => "test-transcription";
+    public bool Fail { get; set; }
+    public int Calls { get; private set; }
+    public string? LastFileName { get; private set; }
+    public Task<string> TranscribeAsync(Stream audio, string fileName, CancellationToken ct)
+    {
+        Calls++;
+        LastFileName = fileName;
+        if (Fail) throw new InvalidOperationException("Provider diagnostic stack must not be displayed.");
+        return Task.FromResult("In this recorded session, Freya found a silver key beside a waterfall.");
+    }
+}

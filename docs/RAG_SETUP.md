@@ -1,0 +1,144 @@
+# Campaign RAG: first implementation
+
+RAG means **retrieval-augmented generation**. Before asking the model to answer, the application finds relevant campaign records and includes them in the request. This does not train or fine-tune the model. PostgreSQL remains the source of truth; the AI has no direct database access and cannot change campaign data.
+
+This implementation treats a "session" as one play meeting. `SessionNumber` identifies that meeting. If "season" means a group of sessions, add season metadata later without replacing the ingestion/retrieval flow.
+
+## Try it
+
+1. Restart the API with your existing configuration. Startup applies pending migrations. DMs and players can use only their own campaign chats for campaigns they own or belong to. Legacy general chats remain saved but inaccessible.
+2. On the dashboard, open **Session Notes** for a campaign you own as DM.
+3. Enter a session number, date, title and narrative. For example: "Freya found a silver key beneath the ruined tower. The party promised Captain Mira they would investigate the abandoned mine."
+4. Save. **Searchable** means the notes and embeddings were saved successfully. **Not searchable yet** means the original notes are saved but the DM needs to retry indexing.
+5. Open **AI chat** and select a campaign in **Campaign chat**. Selecting a campaign opens your existing personal chat or creates it on first use. The selected campaign, displayed messages and retrieved context always correspond to that chat.
+6. Ask "Where did we find the silver key?" or "What did we promise Captain Mira?" Expand **Retrieved session references** to inspect the actual passages supplied to the model.
+7. Ask about a character's current HP. Editing the character sheet changes the next answer's structured context immediately; it does not require reindexing notes.
+
+All session notes in this first version are shared with campaign members. Do not enter DM-only secrets. Only the campaign owner with the DM role can create, reindex or delete notes. Players can read notes and use campaign chat. This deliberately follows the existing ownership/membership rules.
+
+Neither players nor DMs have a general-chat option. Initialization opens a chat in the first accessible campaign. Users with no campaigns receive an empty state. API checks deny listing, reading, clearing or sending messages to legacy general chats for all users. There is one personal chat per user per campaign; membership does not expose other users' transcripts. **Clear chat** removes messages but retains the campaign chat. Repeated creation requests return the existing chat, with a database unique index and serialized creation protecting against duplicate requests across tabs.
+
+## How campaign conversations participate in RAG
+
+Every message in a campaign conversation already uses the retrieval pipeline: relevant session passages, fresh campaign/character facts, and up to 30 recent messages from that conversation are supplied to the model. Conversation history supplies short-term context; the session index supplies campaign knowledge across conversations.
+
+Chat transcripts are not automatically embedded as campaign facts. Hypothetical questions and generated suggestions must not silently become established campaign history. The recommended next step is a DM-reviewed summary workflow: draft a summary from a conversation, approve/edit it as a session note, then index that approved note. This would make useful chat outcomes retrievable without treating every generated statement as authoritative. That summary workflow is not implemented yet.
+
+## Create session notes from a recording
+
+The campaign DM can choose **Start from an audio recording**, select a file and click **Transcribe audio**. The API verifies campaign ownership before calling the transcription provider. The resulting text fills the session draft; it does not enter campaign knowledge until the DM reviews it and clicks **Save session**. Fill in the session number, date and title as usual. Correct character/NPC names and remove out-of-game conversation or DM secrets before saving. No automatic summary or invented event extraction is performed.
+
+The flow is: **audio upload → speech-to-text → reviewed session text → existing chunks/embeddings → campaign retrieval**. Audio itself is not embedded. Fresh character stats still come from database queries. The uploaded recording is not retained as an attachment or made available for playback; only the saved text is retained in PostgreSQL. Framework upload buffers are request-scoped. If playback/archive is needed later, add protected object storage and session attachment metadata rather than putting recordings in public `wwwroot` or database blobs.
+
+This slice supports MP3, M4A, WAV, WEBM, MPEG and MPGA, up to 25,000,000 bytes per file. The multipart request limit allows additional form overhead. The application validates file extension and size; the provider validates/decodes the actual media. No video frames are processed, and automatic video-to-audio extraction is not implemented. Transcription uses the existing OpenAI key and `OpenAI:TranscriptionModel`, defaulting to `gpt-transcribe`, following the [official file transcription guide](https://developers.openai.com/api/docs/guides/speech-to-text). Transcription is billed separately from generation and embeddings, and is not included in the chat cost counter.
+
+Use compressed audio or separate recording parts for files above the limit. Multiple notes can share a session number. Automatic splitting, live microphone recording, speaker labels, background transcription jobs and progress percentages are future work. Processing runs within the request with a ten-minute provider timeout, so long recordings may exceed hosting/proxy limits. Keep the original recording until its transcript is saved. The browser preserves an existing draft if transcription fails and asks before replacing a nonempty draft.
+
+Session text now supports up to 240,000 characters, with embeddings generated in batches of at most 32 passages. A transcript exceeding that limit must be split. All batches must succeed before replacing the existing index; provider failures retain source notes for retry. This change requires no database migration because the existing content column is PostgreSQL `text`.
+
+## Ingestion: turn notes into searchable knowledge
+
+```mermaid
+flowchart LR
+    A[DM enters session notes] --> B[Save original notes in PostgreSQL]
+    B --> C[Split into overlapping passages]
+    C --> D[OpenAI embedding API]
+    D --> E[Save passage vectors and indexing metadata]
+```
+
+An **embedding** is a list of numbers representing text for similarity comparisons. Similar meanings tend to produce similar vectors. We split long notes into passages so retrieval can send a focused excerpt instead of the whole campaign history. Passages are up to 1,000 characters with 150 characters of overlap to retain context near boundaries; Unicode surrogate pairs are preserved. This is a conservative character-based baseline, not a token-aware or document-structure-aware chunker.
+
+`CampaignSessionNote` stores the original narrative, campaign, session number, played date, title and indexing state. `CampaignKnowledgeChunk` stores derived passage text, its position and embedding. The index can be rebuilt from the original notes.
+
+Saving happens before indexing. Provider failures set the note to `failed` without losing its content. A cancelled request can leave it `pending`, which can also be retried. Reindexing is serialized with a PostgreSQL row lock, replaces existing chunks, and records the model and dimensions used. Source notes are immutable in this slice; correct a note by deleting it and adding a replacement. Multiple entries may share a session number. Delete removes the note and its derived chunks.
+
+Indexing currently runs within the save request. That keeps the flow understandable for small notes, but a reliable background job/outbox is the next step for larger imports and automatic retries. A network failure after saving can mean a note was saved even when the browser reports failure; reload the list before resubmitting.
+
+## Retrieval and answering
+
+```mermaid
+flowchart LR
+    A[Question in a campaign conversation] --> B[Verify current campaign access]
+    B --> C[Read current campaign and character facts]
+    B --> D[Embed question using the same model and dimensions]
+    D --> E[Rank authorized campaign passages by cosine similarity]
+    C --> F[Compose bounded reference context]
+    E --> F
+    F --> G[Existing Responses API streaming chat]
+    G --> H[Save reply, usage and retrieved reference snapshots]
+```
+
+The retrieval query filters by campaign in SQL **before** loading vectors. Membership is checked when creating a scoped conversation, listing/loading conversations, sending a question and building retrieval context. Revoked members cannot continue reading or querying those campaign conversations. General chats are inaccessible. A conversation's campaign association cannot be changed after creation.
+
+Session passages are ranked by cosine similarity. Up to four passages above the configured threshold are supplied to the model. A score is a ranking signal, not a probability that the answer is correct. If nothing passes the threshold, the context explicitly says no relevant passages were found. If search fails, chat still receives current campaign and character facts and displays a warning that session search was unavailable.
+
+Current campaign and character fields are read through an explicit allowlist: identity, ability scores, combat stats, HP, saving throws, skills and attacks. Account data such as emails, password hashes and refresh tokens are excluded. Inventory, NPC and quest models are not implemented yet, so this slice does not claim to retrieve those facts. Structured facts describe current state; session notes describe past events. This avoids embedding mutable stats and accidentally answering from stale character snapshots.
+
+Reference text is sent as data with developer instructions to ignore instructions embedded inside it, use current structured facts for stats, cite session facts with labels such as `[S1]`, and acknowledge missing evidence. This reduces prompt-injection risk but does not guarantee model compliance. The model has no application tools or write access here.
+
+Replies store the **retrieved** excerpts and source labels as snapshots. They survive reloads and later note deletion. These references show what was supplied to the model; they do not prove that the model used every passage or that every claim is supported. For automated confidence, the next step is an evaluation set of campaign questions and expected evidence.
+
+## Components and configuration
+
+- `CampaignSessionNotesController`: authenticated REST operations with DM ownership checks and request validation.
+- `CampaignKnowledgeService`: indexing, campaign authorization, structured context and semantic retrieval.
+- `IEmbeddingService` / `OpenAIEmbeddingService`: isolates the provider and makes the pipeline testable without paid API calls.
+- `KnowledgeText`: overlapping chunking and cosine scoring.
+- `AIChatController` / `OpenAIService`: retain the current streaming path and add authorized context plus persisted references.
+- `SessionNotes.tsx` / `sessionNotesApi.ts`: note entry, status, retry and deletion.
+- `AIChat.tsx` / `aiApi.ts`: campaign selection for new chats and reference/warning display.
+- `DnDxDbContextFactory`: lets EF design-time commands run without starting the API or requiring an OpenAI key.
+
+The existing OpenAI .NET SDK already supports embeddings; no additional packages or services were introduced. Use the same `OpenAI:ApiKey` from User Secrets or environment configuration. Non-secret defaults are in `appsettings.json`:
+
+```json
+{
+  "OpenAI": {
+    "EmbeddingModel": "text-embedding-3-small",
+    "EmbeddingDimensions": 512
+  },
+  "Rag": {
+    "MinimumSimilarity": 0.25
+  }
+}
+```
+
+Stored passages and questions must use the same model and dimensions. Changing configuration requires reindexing existing notes; incompatible notes are excluded and produce a warning. The threshold is a starting point and should be tuned against actual campaign questions.
+
+Chat input/output token counts still come from the Responses API, including the reference context sent to the model. Query embedding tokens appear separately on the reply; note-index embedding tokens appear on the note. The existing displayed dollar total estimates generation cost only and does **not** include embedding charges. A note's displayed embedding usage records the latest successful indexing run, not cumulative costs across retries.
+
+## Storage and scaling decision
+
+The repository currently uses PostgreSQL/Npgsql, although AGENTS.md lists SQLite. This feature follows the actual database implementation. Vectors are stored as native PostgreSQL `real[]` arrays and similarity is calculated inside the API. This avoids requiring a new database extension or Docker image change for the first working pipeline.
+
+This is an exact scan for a small development dataset, not a production vector index. Retrieval supports up to 2,000 compatible chunks per campaign. Above that limit it explicitly disables session retrieval with a warning rather than silently ignoring older notes. Current context supports up to 40 characters and 20 attacks per character, with a 50,000-character structured context limit. Larger campaigns need targeted structured tools and better context budgeting.
+
+When usage grows, replace the scan with PostgreSQL **pgvector** and database-side similarity/indexing while retaining campaign filters and the service boundary. Add background ingestion before large document imports. Then add a reusable read-only `SearchCampaignKnowledge` tool alongside typed `GetCharacter`/`GetCampaignState` tools. Tool calling, agents and MCP can reuse these application services and authorization checks; they should not bypass them or receive unrestricted database access. DM-private notes require explicit visibility metadata and filtering in listing, indexing, retrieval and retained chat references before they can be supported.
+
+## Migration and verification
+
+`20261005030847_CampaignSessionRag` adds two tables, optional campaign scope on conversations and retrieval metadata on messages. Existing messages receive `SourcesJson = "[]"`. It does not drop or recreate the development database.
+
+Build and checks:
+
+```powershell
+dotnet build DnDCampaignManager.sln -p:UseAppHost=false -p:OutputPath=bin/SolutionVerification/
+dotnet build DnDCampaignManager.Api/DnDCampaignManager.Api.csproj -c RagVerification -p:UseAppHost=false
+dotnet ef migrations has-pending-model-changes --project DnDCampaignManager.Api --configuration RagVerification --no-build
+dotnet build tests/CampaignMembershipChecks/CampaignMembershipChecks.csproj -c RagVerification -p:UseAppHost=false
+dotnet tests/CampaignMembershipChecks/bin/RagVerification/net8.0/CampaignMembershipChecks.dll C:/Users/Taka/source/repos/DnDCampaignManager/DnDCampaignManager.Api
+```
+
+The console checks connect to the configured development PostgreSQL database and apply pending migrations first. Temporary fixtures are created inside a transaction and rolled back. Provider calls use fakes; tests cover indexing failure/retry, source retention, semantic ranking, access restrictions, campaign isolation, live character edits and the real SSE contract. They do not measure real embedding quality or model grounding.
+
+From `DnDCampaignManager.web`:
+
+```powershell
+npm run build
+node --test tests/characterRequest.test.cjs tests/campaignCharacterCreation.test.cjs tests/campaignInvite.test.cjs tests/aiStream.test.cjs tests/campaignRag.test.cjs
+npx eslint src/pages/SessionNotes.tsx src/pages/AIChat.tsx src/api/sessionNotesApi.ts src/api/campaignApi.ts src/api/aiApi.ts src/components/CampaignItem.tsx src/App.tsx
+```
+
+Official references used: [OpenAI embeddings](https://developers.openai.com/api/docs/guides/embeddings) and [retrieval](https://developers.openai.com/api/docs/guides/retrieval). The latter explains semantic retrieval and OpenAI-managed vector stores; this implementation keeps its own campaign-scoped storage in PostgreSQL.
+
+`20261005045716_OneChatPerCampaign` enforces unique `(UserId, CampaignId)` pairs for scoped chats. Before creating the index, it merges duplicate campaign chats into the oldest chat ID, moves every message there, and preserves the latest update timestamp. Old general chats remain stored. Rolling back the index does not split merged histories again. No database reset is required.

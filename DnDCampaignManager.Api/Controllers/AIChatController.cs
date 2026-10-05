@@ -17,22 +17,26 @@ namespace DnDCampaignManager.Api.Controllers;
 public class AIChatController : ControllerBase
 {
     private const int MaxMessageLength = 8000;
+    private static readonly JsonSerializerOptions SseJsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly DnDxDbContext _db;
     private readonly IAIService _aiService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AIChatController> _logger;
+    private readonly CampaignKnowledgeService _knowledge;
 
     public AIChatController(
         DnDxDbContext db,
         IAIService aiService,
         IConfiguration configuration,
-        ILogger<AIChatController> logger)
+        ILogger<AIChatController> logger,
+        CampaignKnowledgeService knowledge)
     {
         _db = db;
         _aiService = aiService;
         _configuration = configuration;
         _logger = logger;
+        _knowledge = knowledge;
     }
 
     [HttpGet("status")]
@@ -54,15 +58,15 @@ public class AIChatController : ControllerBase
     {
         var userId = GetUserId();
 
-        var conversations = await _db.AIConversations
-            .Where(x => x.UserId == userId)
+        var conversations = await AccessibleConversations(userId)
             .OrderByDescending(x => x.UpdatedAtUtc)
             .Select(x => new ConversationSummaryDto(
                 x.Id,
                 x.Title,
                 x.CreatedAtUtc,
                 x.UpdatedAtUtc,
-                x.Messages.Count))
+                x.Messages.Count,
+                x.CampaignId))
             .ToListAsync(cancellationToken);
 
         return Ok(conversations);
@@ -73,29 +77,42 @@ public class AIChatController : ControllerBase
         [FromBody] CreateConversationRequest? request,
         CancellationToken cancellationToken)
     {
+        if (request?.CampaignId is not int campaignId)
+            return BadRequest(new { error = "Select a campaign you belong to." });
+        return await GetOrCreateCampaignConversation(campaignId, cancellationToken);
+    }
+
+    [HttpPost("conversations/default")]
+    public async Task<ActionResult<ConversationSummaryDto>> GetOrCreateDefaultConversation(CancellationToken cancellationToken)
+    {
         var userId = GetUserId();
-        var title = string.IsNullOrWhiteSpace(request?.Title)
-            ? "New AI Conversation"
-            : request.Title.Trim()[..Math.Min(request.Title.Trim().Length, 120)];
+        var campaignId = await _db.Campaigns.Where(c => c.OwnerId == userId || c.Players.Any(p => p.UserId == userId))
+            .OrderBy(c => c.Id).Select(c => (int?)c.Id).FirstOrDefaultAsync(cancellationToken);
+        return campaignId is int id ? await GetOrCreateCampaignConversation(id, cancellationToken) : NoContent();
+    }
 
-        var conversation = new AIConversation
+    private async Task<ActionResult<ConversationSummaryDto>> GetOrCreateCampaignConversation(int campaignId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        await using var transaction = _db.Database.CurrentTransaction is null
+            ? await _db.Database.BeginTransactionAsync(ct) : null;
+        var user = await _db.Users.FromSqlInterpolated(
+            $"SELECT * FROM \"Users\" WHERE \"Id\" = {userId} FOR UPDATE")
+            .SingleOrDefaultAsync(ct);
+        if (user is null) return Unauthorized();
+        if (!await _knowledge.CanAccessAsync(campaignId, userId, ct))
+            return NotFound(new { error = "Campaign not found." });
+        var conversation = await AccessibleConversations(userId).SingleOrDefaultAsync(x => x.CampaignId == campaignId, ct);
+        if (conversation is null)
         {
-            Id = Guid.NewGuid(),
-            UserId = userId,
-            Title = title,
-            CreatedAtUtc = DateTime.UtcNow,
-            UpdatedAtUtc = DateTime.UtcNow
-        };
-
-        _db.AIConversations.Add(conversation);
-        await _db.SaveChangesAsync(cancellationToken);
-
-        return Ok(new ConversationSummaryDto(
-            conversation.Id,
-            conversation.Title,
-            conversation.CreatedAtUtc,
-            conversation.UpdatedAtUtc,
-            0));
+            conversation = new AIConversation { Id = Guid.NewGuid(), UserId = userId, CampaignId = campaignId };
+            _db.AIConversations.Add(conversation);
+            await _db.SaveChangesAsync(ct);
+        }
+        var count = await _db.AIMessages.CountAsync(x => x.ConversationId == conversation.Id, ct);
+        if (transaction is not null) await transaction.CommitAsync(ct);
+        return Ok(new ConversationSummaryDto(conversation.Id, conversation.Title,
+            conversation.CreatedAtUtc, conversation.UpdatedAtUtc, count, conversation.CampaignId));
     }
 
     [HttpGet("conversations/{conversationId:guid}")]
@@ -105,33 +122,16 @@ public class AIChatController : ControllerBase
     {
         var userId = GetUserId();
 
-        var conversation = await _db.AIConversations
-            .AsNoTracking()
-            .Where(x => x.Id == conversationId && x.UserId == userId)
-            .Select(x => new ConversationDto(
-                x.Id,
-                x.Title,
-                x.CreatedAtUtc,
-                x.UpdatedAtUtc,
-                x.Messages
-                    .OrderBy(m => m.CreatedAtUtc)
-                    .Take(200)
-                    .Select(m => new ConversationMessageDto(
-                        m.Id,
-                        m.Role,
-                        m.Content,
-                        m.CreatedAtUtc,
-                        m.Model,
-                        m.InputTokenCount,
-                        m.OutputTokenCount,
-                        m.TotalTokenCount,
-                        m.EstimatedCostUsd,
-                        m.DurationMs,
-                        m.Status))
-                    .ToList()))
-            .SingleOrDefaultAsync(cancellationToken);
-
-        return conversation is null ? NotFound() : Ok(conversation);
+        var conversation = await LoadConversationAsync(conversationId, userId, cancellationToken);
+        if (conversation is null) return NotFound();
+        var messages = await _db.AIMessages.AsNoTracking().Where(m => m.ConversationId == conversationId)
+            .OrderByDescending(m => m.CreatedAtUtc).ThenByDescending(m => m.Id).Take(200).ToListAsync(cancellationToken);
+        return Ok(new ConversationDto(conversation.Id, conversation.Title, conversation.CreatedAtUtc,
+            conversation.UpdatedAtUtc, messages.OrderBy(m => m.CreatedAtUtc).ThenBy(m => m.Id).Select(m =>
+                new ConversationMessageDto(m.Id, m.Role, m.Content, m.CreatedAtUtc, m.Model,
+                    m.InputTokenCount, m.OutputTokenCount, m.TotalTokenCount, m.EstimatedCostUsd,
+                    m.DurationMs, m.Status, JsonSerializer.Deserialize<List<KnowledgeSourceDto>>(m.SourcesJson),
+                    m.RetrievalInputTokens, m.RetrievalWarning)).ToList(), conversation.CampaignId));
     }
 
     [HttpDelete("conversations/{conversationId:guid}")]
@@ -140,15 +140,24 @@ public class AIChatController : ControllerBase
         CancellationToken cancellationToken)
     {
         var userId = GetUserId();
-        var conversation = await _db.AIConversations
-            .SingleOrDefaultAsync(x => x.Id == conversationId && x.UserId == userId, cancellationToken);
+        await using var transaction = _db.Database.CurrentTransaction is null
+            ? await _db.Database.BeginTransactionAsync(cancellationToken) : null;
+        var user = await _db.Users.FromSqlInterpolated(
+            $"SELECT * FROM \"Users\" WHERE \"Id\" = {userId} FOR UPDATE")
+            .SingleOrDefaultAsync(cancellationToken);
+        if (user is null) return Unauthorized();
+        var conversation = await LoadConversationAsync(conversationId, userId, cancellationToken);
 
         if (conversation is null)
             return NotFound();
 
-        _db.AIConversations.Remove(conversation);
+        await _db.AIMessages.Where(x => x.ConversationId == conversationId).ExecuteDeleteAsync(cancellationToken);
+        conversation.Title = "New AI Conversation";
+        conversation.UpdatedAtUtc = DateTime.UtcNow;
         await _db.SaveChangesAsync(cancellationToken);
-        return NoContent();
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+        return Ok(new ConversationSummaryDto(conversation.Id, conversation.Title,
+            conversation.CreatedAtUtc, conversation.UpdatedAtUtc, 0, conversation.CampaignId));
     }
 
     [HttpPost("conversations/{conversationId:guid}/messages")]
@@ -175,10 +184,12 @@ public class AIChatController : ControllerBase
 
         try
         {
-            var completion = await _aiService.GetChatResponseAsync(history, cancellationToken);
+            var context = await BuildContextAsync(conversation, userId, request.Message, cancellationToken);
+            var completion = await _aiService.GetChatResponseAsync(history, cancellationToken, context?.Prompt);
             stopwatch.Stop();
 
             var assistantMessage = CreateAssistantMessage(conversationId, completion);
+            ApplyContext(assistantMessage, context);
             _db.AIMessages.Add(assistantMessage);
             conversation.UpdatedAtUtc = DateTime.UtcNow;
             await _db.SaveChangesAsync(cancellationToken);
@@ -192,7 +203,8 @@ public class AIChatController : ControllerBase
                     completion.Usage.InputTokens,
                     completion.Usage.OutputTokens,
                     completion.Usage.TotalTokens,
-                    completion.Usage.EstimatedCostUsd)));
+                    completion.Usage.EstimatedCostUsd), context?.Sources,
+                context?.EmbeddingInputTokens ?? 0, context?.Warning));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -248,7 +260,8 @@ public class AIChatController : ControllerBase
 
         try
         {
-            await foreach (var update in _aiService.StreamChatResponseAsync(history, cancellationToken))
+            var context = await BuildContextAsync(conversation, userId, request.Message, cancellationToken);
+            await foreach (var update in _aiService.StreamChatResponseAsync(history, cancellationToken, context?.Prompt))
             {
                 if (update.Type == "token" && update.Text is not null)
                 {
@@ -259,6 +272,7 @@ public class AIChatController : ControllerBase
                 {
                     var completion = update.Completion;
                     var assistantMessage = CreateAssistantMessage(conversationId, completion);
+                    ApplyContext(assistantMessage, context);
                     assistantMessage.Content = assistantText.Length > 0
                         ? assistantText.ToString()
                         : completion.Reply;
@@ -274,6 +288,11 @@ public class AIChatController : ControllerBase
                             conversationId,
                             messageId = assistantMessage.Id,
                             model = completion.Model,
+                            durationMs = completion.DurationMs,
+                            reply = assistantMessage.Content,
+                            sources = context?.Sources ?? [],
+                            retrievalInputTokens = context?.EmbeddingInputTokens ?? 0,
+                            retrievalWarning = context?.Warning,
                             usage = new AIUsageDto(
                                 completion.Usage.InputTokens,
                                 completion.Usage.OutputTokens,
@@ -303,10 +322,28 @@ public class AIChatController : ControllerBase
         int userId,
         CancellationToken cancellationToken)
     {
-        return await _db.AIConversations
-            .SingleOrDefaultAsync(
-                x => x.Id == conversationId && x.UserId == userId,
-                cancellationToken);
+        return await AccessibleConversations(userId).SingleOrDefaultAsync(x => x.Id == conversationId, cancellationToken);
+    }
+
+    private IQueryable<AIConversation> AccessibleConversations(int userId)
+    {
+        return _db.AIConversations.Where(x => x.UserId == userId && x.CampaignId != null &&
+            (x.Campaign!.OwnerId == userId || x.Campaign.Players.Any(p => p.UserId == userId)));
+    }
+
+    private Task<CampaignContext?> BuildContextAsync(AIConversation conversation, int userId, string question, CancellationToken ct)
+        => conversation.CampaignId is int campaignId ? BuildCampaignContextAsync(campaignId, userId, question, ct)
+            : Task.FromResult<CampaignContext?>(null);
+
+    private async Task<CampaignContext?> BuildCampaignContextAsync(int campaignId, int userId, string question, CancellationToken ct)
+        => await _knowledge.BuildContextAsync(campaignId, userId, question, ct);
+
+    private static void ApplyContext(AIMessage message, CampaignContext? context)
+    {
+        if (context is null) return;
+        message.SourcesJson = JsonSerializer.Serialize(context.Sources);
+        message.RetrievalInputTokens = context.EmbeddingInputTokens;
+        message.RetrievalWarning = context.Warning;
     }
 
     private async Task<List<AIMessage>> LoadHistoryAsync(
@@ -382,7 +419,7 @@ public class AIChatController : ControllerBase
         object payload,
         CancellationToken cancellationToken)
     {
-        var json = JsonSerializer.Serialize(payload);
+        var json = JsonSerializer.Serialize(payload, SseJsonOptions);
         var data = Encoding.UTF8.GetBytes($"event: {eventName}\ndata: {json}\n\n");
         await Response.Body.WriteAsync(data, cancellationToken);
         await Response.Body.FlushAsync(cancellationToken);

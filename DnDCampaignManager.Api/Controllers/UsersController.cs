@@ -32,7 +32,8 @@ public class UsersController : ControllerBase
             {
                 Id = u.Id,
                 Email = u.Email,
-                Role = u.Role
+                Role = u.Role,
+                IsAdmin = u.IsAdmin
             })
             .SingleOrDefaultAsync();
 

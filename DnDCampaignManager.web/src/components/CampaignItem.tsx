@@ -92,6 +92,9 @@ export default function CampaignItem({
 
             {/* Actions */}
             <div className="flex flex-wrap gap-2 mt-3">
+                <Button size="sm" variant="secondary" onClick={() => navigate(`/campaigns/${campaign.id}/session-notes`)}>
+                    Session Notes
+                </Button>
                 {isDM && (
                     <>
                         <Button size="sm" variant="secondary"

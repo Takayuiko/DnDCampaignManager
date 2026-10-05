@@ -12,6 +12,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using OpenAI.Responses;
+using OpenAI.Embeddings;
+using OpenAI.Audio;
 using System.Text;
 
 var seedDevelopmentDm = args.Contains("--seed-development-dm", StringComparer.Ordinal);
@@ -106,6 +108,8 @@ if (jwtOptions.SigningKeys.Any(
 // Application services
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddScoped<IJwtService, JwtService>();
+builder.Services.AddScoped<DnDCampaignManager.Api.Services.CurrentTokenValidator>();
+builder.Services.AddScoped<DnDCampaignManager.Api.Services.DungeonMasterManagementService>();
 
 // OpenAI Responses API
 var openAiApiKey = builder.Configuration["OpenAI:ApiKey"];
@@ -118,6 +122,13 @@ if (string.IsNullOrWhiteSpace(openAiApiKey))
 
 builder.Services.AddSingleton(new ResponsesClient(openAiApiKey));
 builder.Services.AddScoped<IAIService, OpenAIService>();
+builder.Services.AddSingleton(new EmbeddingClient(
+    builder.Configuration["OpenAI:EmbeddingModel"] ?? "text-embedding-3-small", openAiApiKey));
+builder.Services.AddScoped<IEmbeddingService, OpenAIEmbeddingService>();
+builder.Services.AddScoped<CampaignKnowledgeService>();
+builder.Services.AddSingleton(new AudioClient(
+    builder.Configuration["OpenAI:TranscriptionModel"] ?? "gpt-transcribe", openAiApiKey));
+builder.Services.AddScoped<IAudioTranscriptionService, OpenAIAudioTranscriptionService>();
 
 // Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -133,6 +144,15 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 KeyId = k.Kid
             });
 
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                var validator = context.HttpContext.RequestServices.GetRequiredService<DnDCampaignManager.Api.Services.CurrentTokenValidator>();
+                if (!await validator.IsCurrentAsync(context.Principal, context.HttpContext.RequestAborted))
+                    context.Fail("The account permissions changed. Sign in again.");
+            }
+        };
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,

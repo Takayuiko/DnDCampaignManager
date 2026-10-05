@@ -3,6 +3,7 @@ using System;
 using DnDCampingManager.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace DnDCampaignManager.Api.Migrations
 {
     [DbContext(typeof(DnDxDbContext))]
-    partial class DnDxDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261005030847_CampaignSessionRag")]
+    partial class CampaignSessionRag
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -47,9 +50,6 @@ namespace DnDCampaignManager.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CampaignId");
-
-                    b.HasIndex("UserId", "CampaignId")
-                        .IsUnique();
 
                     b.HasIndex("UserId", "UpdatedAtUtc");
 
@@ -610,9 +610,6 @@ namespace DnDCampaignManager.Api.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<bool>("IsAdmin")
-                        .HasColumnType("boolean");
-
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("text");
@@ -629,10 +626,7 @@ namespace DnDCampaignManager.Api.Migrations
                     b.HasIndex("Email")
                         .IsUnique();
 
-                    b.ToTable("Users", t =>
-                        {
-                            t.HasCheckConstraint("CK_Users_AdminMustBeDM", "NOT \"IsAdmin\" OR \"Role\" = 'DM'");
-                        });
+                    b.ToTable("Users");
                 });
 
             modelBuilder.Entity("DnDCampaignManager.Api.Models.AI.AIConversation", b =>
