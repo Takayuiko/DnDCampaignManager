@@ -6,6 +6,7 @@ import CharacterSheetForm, {
     type CharacterSkill
 } from "../components/Character/CharacterSheetForm";
 import Button from "../components/UI/Button";
+import ErrorPanel from "../components/UI/ErrorPanel";
 import { extractApiError } from "../Utils/apiError";
 
 const defaultSkills: CharacterSkill[] = [
@@ -90,6 +91,7 @@ export default function EditCharacter() {
 
     const [form, setForm] = useState<CharacterForm>(emptyForm);
     const [loading, setLoading] = useState(true);
+    const [loaded, setLoaded] = useState(false);
 
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -105,10 +107,15 @@ export default function EditCharacter() {
 
     useEffect(() => {
         const load = async () => {
-            if (!cid || !chid) return;
+            if (!Number.isInteger(cid) || cid <= 0 || !Number.isInteger(chid) || chid <= 0) {
+                setError("Invalid campaign or character id.");
+                setLoading(false);
+                return;
+            }
 
             setError(null);
             setLoading(true);
+            setLoaded(false);
             try {
                 const res = await getCharacter(cid, chid);
 
@@ -130,9 +137,9 @@ export default function EditCharacter() {
                         ? character.attacks.map(attack => ({ ...attack, clientId: crypto.randomUUID() }))
                         : [],
                 });
-            } catch (err: any) {
-                alert(err?.response?.data ?? "Character not found");
-                navigate("/dashboard");
+                setLoaded(true);
+            } catch (err: unknown) {
+                setError(extractApiError(err, "Unable to load character."));
             } finally {
                 setLoading(false);
             }
@@ -150,7 +157,7 @@ export default function EditCharacter() {
         try {
             await updateCharacterByCampaign(cid, chid, form);
             alert("Character stats updated")
-        } catch (err: any) {
+        } catch (err: unknown) {
             setError(extractApiError(err, "Failed to save character."));
         } finally {
             setSubmitting(false);
@@ -158,6 +165,12 @@ export default function EditCharacter() {
     };
 
     if (loading) return <p className="p-6 text-stone-600">Loading...</p>;
+    if (!loaded) return (
+        <div className="p-6">
+            <ErrorPanel message={error ?? "Unable to load character."} />
+            <Button type="button" onClick={() => navigate("/dashboard")}>Back to dashboard</Button>
+        </div>
+    );
 
     return (
         <CharacterSheetForm

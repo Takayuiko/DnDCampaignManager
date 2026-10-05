@@ -14,7 +14,15 @@ using Microsoft.OpenApi.Models;
 using OpenAI.Responses;
 using System.Text;
 
-var builder = WebApplication.CreateBuilder(args);
+var seedDevelopmentDm = args.Contains("--seed-development-dm", StringComparer.Ordinal);
+var builder = WebApplication.CreateBuilder(args.Where(x => x != "--seed-development-dm").ToArray());
+
+if (seedDevelopmentDm)
+{
+    await DnDCampaignManager.Api.Services.DevelopmentDmSeeder.RunAsync(
+        builder.Configuration, builder.Environment);
+    return;
+}
 
 // Controllers
 builder.Services.AddControllers()
