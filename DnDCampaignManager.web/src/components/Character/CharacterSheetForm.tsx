@@ -54,9 +54,11 @@ export type CharacterOptionsPayload = {
     backgrounds: { id: number; name: string; isCustom: boolean }[];
 };
 
-export type GetCharacterResponse = {
-    character: CharacterForm;          
-    options: CharacterOptionsPayload;  
+export type GetCharacterResponse = Omit<CharacterForm, "campaignId" | "attacks"> & {
+    id: number;
+    userId: number;
+    proficiencyBonus: number;
+    attacks: Omit<Attack, "clientId">[];
 };
 
 type SavingThrow = {

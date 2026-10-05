@@ -1,5 +1,6 @@
 import api from "./axios";
-import { type GetCharacterResponse } from "../components/Character/CharacterSheetForm";
+import { type GetCharacterResponse, type CharacterForm } from "../components/Character/CharacterSheetForm";
+import { toCharacterRequest } from "./characterRequest";
 
 // Campaign
 export const getCampaigns = () => api.get("/campaigns");
@@ -16,15 +17,15 @@ export function updateCampaign(id: number, data: { name: string; description: st
     return api.put(`/campaigns/${id}`, data);
 }
 export function addPlayerToCampaign(campaignId: number, email: string) {
-    return api.post(`/campaigns/${campaignId}/players`, { email });
+    return api.post<{ id: number; email: string }>(`/campaigns/${campaignId}/players`, { email });
 }
 
 // Character
 export const removePlayerFromCampaign = (campaignId: number, playerId: number) =>
     api.delete(`/campaigns/${campaignId}/players/${playerId}`)
 
-export const createCharacter = (campaignId: number, data: any) =>
-    api.post(`/campaigns/${campaignId}/characters`, data);
+export const createCharacter = (campaignId: number, data: CharacterForm) =>
+    api.post<GetCharacterResponse>(`/campaigns/${campaignId}/characters`, toCharacterRequest(data));
 
 export const getCharacter = (campaignId: number, characterId: number) =>
     api.get<GetCharacterResponse>(`/campaigns/${campaignId}/characters/${characterId}`);
@@ -32,8 +33,8 @@ export const getCharacter = (campaignId: number, characterId: number) =>
 export const getCharactersByCampaign = (campaignId: number) =>
     api.get(`/campaigns/${campaignId}/characters`);
 
-export const updateCharacterByCampaign = ( campaignId: number, characterId: number, data: any ) =>
-    api.put(`/campaigns/${campaignId}/characters/${characterId}`, data);
+export const updateCharacterByCampaign = ( campaignId: number, characterId: number, data: CharacterForm ) =>
+    api.put<void>(`/campaigns/${campaignId}/characters/${characterId}`, toCharacterRequest(data));
 
 // Character Classes
 export const getCharacterClass = (campaignId: number) =>

@@ -3,10 +3,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import { getCharacter, updateCharacterByCampaign } from "../api/campaignApi";
 import CharacterSheetForm, {
     type CharacterForm,
-    type CharacterSkill,
-    type CharacterOptionsPayload
+    type CharacterSkill
 } from "../components/Character/CharacterSheetForm";
 import Button from "../components/UI/Button";
+import ErrorPanel from "../components/UI/ErrorPanel";
 import { extractApiError } from "../Utils/apiError";
 
 const defaultSkills: CharacterSkill[] = [
@@ -91,11 +91,10 @@ export default function EditCharacter() {
 
     const [form, setForm] = useState<CharacterForm>(emptyForm);
     const [loading, setLoading] = useState(true);
+    const [loaded, setLoaded] = useState(false);
 
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
-
-    const [initialOptions, setInitialOptions] = useState<CharacterOptionsPayload | null>(null);
 
     const topRight = useMemo(
         () => (
@@ -108,35 +107,39 @@ export default function EditCharacter() {
 
     useEffect(() => {
         const load = async () => {
-            if (!cid || !chid) return;
+            if (!Number.isInteger(cid) || cid <= 0 || !Number.isInteger(chid) || chid <= 0) {
+                setError("Invalid campaign or character id.");
+                setLoading(false);
+                return;
+            }
 
             setError(null);
             setLoading(true);
+            setLoaded(false);
             try {
                 const res = await getCharacter(cid, chid);
 
-                const characterx = res.data.character;
-                const options = res.data.options;
+                const character = res.data;
 
                 setForm({
                     ...emptyForm,
-                    characterx,
+                    ...character,
                     campaignId: cid,
-                    ...res.data,
                     skills:
-                        Array.isArray(res.data?.character.skills) && res.data.character.skills.length > 0
-                            ? res.data.character.skills
+                        Array.isArray(character.skills) && character.skills.length > 0
+                            ? character.skills
                             : emptyForm.skills,
                     hitDice: {
                         ...emptyForm.hitDice,
-                        ...(res.data?.character.hitDice ?? {}),
+                        ...(character.hitDice ?? {}),
                     },
-                    attacks: Array.isArray(res.data?.character.attacks) ? res.data.character.attacks : [],
+                    attacks: Array.isArray(character.attacks)
+                        ? character.attacks.map(attack => ({ ...attack, clientId: crypto.randomUUID() }))
+                        : [],
                 });
-                setInitialOptions(options);
-            } catch (err: any) {
-                alert(err?.response?.data ?? "Character not found");
-                navigate("/dashboard");
+                setLoaded(true);
+            } catch (err: unknown) {
+                setError(extractApiError(err, "Unable to load character."));
             } finally {
                 setLoading(false);
             }
@@ -154,7 +157,7 @@ export default function EditCharacter() {
         try {
             await updateCharacterByCampaign(cid, chid, form);
             alert("Character stats updated")
-        } catch (err: any) {
+        } catch (err: unknown) {
             setError(extractApiError(err, "Failed to save character."));
         } finally {
             setSubmitting(false);
@@ -162,6 +165,12 @@ export default function EditCharacter() {
     };
 
     if (loading) return <p className="p-6 text-stone-600">Loading...</p>;
+    if (!loaded) return (
+        <div className="p-6">
+            <ErrorPanel message={error ?? "Unable to load character."} />
+            <Button type="button" onClick={() => navigate("/dashboard")}>Back to dashboard</Button>
+        </div>
+    );
 
     return (
         <CharacterSheetForm
@@ -175,7 +184,6 @@ export default function EditCharacter() {
             submitLabel="Save Character"
             submitting={submitting}
             error={error}
-            initialOptions={initialOptions}
         />
     );
 }

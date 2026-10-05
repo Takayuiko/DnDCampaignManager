@@ -114,7 +114,7 @@ export default function CampaignItem({
                     </>
                 )}
 
-                {!myCharacter && !isDM && (
+                {user && !myCharacter && !isDM && (
                     <button
                         onClick={() => onAddCharacter(campaign.id)}
                         className="ml-auto px-3 py-1 rounded bg-emerald-700 text-white text-sm hover:bg-emerald-600"

@@ -202,17 +202,28 @@ namespace DnDCampaignManager.Api.Controllers
             if (campaign.OwnerId != userId)
                 return Forbid();
 
-            var player = await _dnDxDbContext.Users
-                .SingleOrDefaultAsync(u => u.Email == dto.Email);
+            var normalizedEmail = dto.Email.Trim().ToLowerInvariant();
+            var matches = await _dnDxDbContext.Users
+                .Where(u => u.Email.ToLower() == normalizedEmail)
+                .Take(2)
+                .ToListAsync();
+
+            if (matches.Count > 1)
+                return Conflict("Multiple accounts match this email. Use a unique account email.");
+
+            var player = matches.SingleOrDefault();
 
             if (player == null)
-                return BadRequest("User not found");
+                return NotFound("No registered user exists with that email.");
 
             var alreadyAdded = campaign.Players
                 .Any(p => p.UserId == player.Id);
 
             if (alreadyAdded)
-                return BadRequest("Player already in campaign");
+                return Conflict("Player already in campaign");
+
+            if (player.Id == campaign.OwnerId)
+                return BadRequest("The campaign DM already has access to this campaign.");
 
             campaign.Players.Add(new CampaignPlayer
             {
@@ -222,7 +233,7 @@ namespace DnDCampaignManager.Api.Controllers
 
             await _dnDxDbContext.SaveChangesAsync();
 
-            return Ok();
+            return Ok(new PlayerResponseDto(player.Id, player.Email));
         }
 
         [HttpDelete("{campaignId}/players/{playerId:int}")]

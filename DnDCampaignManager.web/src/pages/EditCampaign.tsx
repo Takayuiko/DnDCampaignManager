@@ -7,6 +7,7 @@ import {
     removePlayerFromCampaign,
 } from "../api/campaignApi";
 import { useAuth } from "../auth/AuthContext";
+import { extractApiError } from "../Utils/apiError";
 
 type Player = { id: number; email: string };
 
@@ -21,8 +22,8 @@ type CampaignResponse = {
 type TabKey = "campaign" | "players";
 
 export default function EditCampaign() {
-    const { id } = useParams();
-    const campaignId = Number(id);
+    const { campaignId: campaignIdParam } = useParams();
+    const campaignId = Number(campaignIdParam);
     const navigate = useNavigate();
     const { user } = useAuth();
 
@@ -46,10 +47,13 @@ export default function EditCampaign() {
 
     const [error, setError] = useState<string | null>(null);
     const [playersError, setPlayersError] = useState<string | null>(null);
+    const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
     const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
     const loadCampaign = async () => {
-        if (!campaignId) return;
+        if (!Number.isInteger(campaignId) || campaignId <= 0) {
+            throw new Error("Invalid campaign id.");
+        }
 
         setError(null);
         setPlayersError(null);
@@ -67,8 +71,8 @@ export default function EditCampaign() {
             try {
                 setLoading(true);
                 await loadCampaign();
-            } catch (err: any) {
-                alert(err?.response?.data ?? "Campaign not found");
+            } catch (err: unknown) {
+                alert(extractApiError(err, "Campaign not found"));
                 navigate("/dashboard");
             } finally {
                 setLoading(false);
@@ -96,8 +100,8 @@ export default function EditCampaign() {
             await updateCampaign(campaignId, { name, description });
             setSaveSuccess("Campaign saved.");
             await loadCampaign();
-        } catch (err: any) {
-            setError(err?.response?.data ?? "Failed to update campaign");
+        } catch (err: unknown) {
+            setError(extractApiError(err, "Failed to update campaign"));
         } finally {
             setSavingCampaign(false);
         }
@@ -107,6 +111,7 @@ export default function EditCampaign() {
         if (!campaignId) return;
 
         setPlayersError(null);
+        setInviteSuccess(null);
 
         const email = playerEmail.trim().toLowerCase();
         if (!email) {
@@ -116,11 +121,12 @@ export default function EditCampaign() {
 
         setInviting(true);
         try {
-            await addPlayerToCampaign(campaignId, email);
+            const response = await addPlayerToCampaign(campaignId, email);
+            setPlayers(current => [...current, response.data]);
             setPlayerEmail("");
-            await loadCampaign(); 
-        } catch (err: any) {
-            setPlayersError(err?.response?.data ?? "Failed to invite player");
+            setInviteSuccess(`${response.data.email} was added to this campaign.`);
+        } catch (err: unknown) {
+            setPlayersError(extractApiError(err, "Unable to add the player right now. Please try again."));
         } finally {
             setInviting(false);
         }
@@ -135,8 +141,8 @@ export default function EditCampaign() {
         try {
             await removePlayerFromCampaign(campaignId, playerId);
             await loadCampaign();
-        } catch (err: any) {
-            setPlayersError(err?.response?.data ?? "Failed to remove player");
+        } catch (err: unknown) {
+            setPlayersError(extractApiError(err, "Failed to remove player"));
         } finally {
             setRemovingId(null);
         }
@@ -272,6 +278,9 @@ export default function EditCampaign() {
                                 )}
 
                                 {/* Invite by email */}
+                                {inviteSuccess && (
+                                    <p role="status" className="mb-4 text-sm text-emerald-800">{inviteSuccess}</p>
+                                )}
                                 <div className="flex flex-col sm:flex-row gap-3">
                                     <input
                                         value={playerEmail}
