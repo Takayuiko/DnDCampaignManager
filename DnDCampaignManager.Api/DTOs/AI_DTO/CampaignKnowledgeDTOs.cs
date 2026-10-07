@@ -13,7 +13,7 @@ public sealed record SessionNoteDto(long Id, int CampaignId, int SessionNumber, 
     string? EmbeddingModel, int EmbeddingDimensions, int EmbeddingInputTokens, int ChunkCount);
 
 public sealed record KnowledgeSourceDto(string Label, long SessionNoteId, int SessionNumber,
-    string Title, string Excerpt, double Score);
+    string Title, string Excerpt, double Score, long? MapId = null);
 
 public sealed record CampaignContext(string Prompt, IReadOnlyList<KnowledgeSourceDto> Sources,
     int EmbeddingInputTokens, string? Warning = null);

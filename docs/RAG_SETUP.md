@@ -6,6 +6,46 @@ This implementation treats a "session" as one play meeting. `SessionNumber` iden
 
 ## Try it
 
+### Campaign maps
+
+Open **Maps** from a campaign card. **View maps** displays map images, location descriptions and pins, without indexing status. The campaign owner with the DM role also has a **Manage maps** tab for adding, editing, deleting and reindexing maps. Management starts with preview cards, with three cards per row on wide screens, six reserved spaces, and a vertically scrollable list for additional maps. Only the next available card contains Add map, including when all six spaces are occupied. Narrow screens use fewer columns in the same bounded area. Indexing status and retry remain available on management cards. Add map or Edit replaces the card list with a single form. Saving or canceling returns to the list; failed saves retain the form and draft for correction. Full-size map display stays in the viewer/editor while cards use small previews. Edit, location and other management actions use the shared button component. All map content is shared; this version has no DM-private maps or locations.
+
+Map names must be unique within a campaign, ignoring capitalization and surrounding spaces. Different campaigns may reuse a name. Create and rename requests return HTTP 409 with a readable error on conflicts. Campaign row locks serialize name checks, and a database unique index on `(CampaignId, NormalizedTitle)` enforces the rule. The `UniqueCampaignMapNames` migration backfills normalized titles; if existing names conflict, it preserves the oldest map's name and suffixes newer maps with `(duplicate ID)`, adding a counter if that suffix already exists. Renamed maps are marked pending for reindexing; images and locations are preserved. Rolling back this migration removes the constraint but does not undo these renamed titles.
+
+A map requires a title, a PNG/JPEG/WebP image up to 50,000,000 bytes (50 MB), and 1–50 named locations. Create/update requests allow 51,000,000 bytes to accommodate multipart metadata. Add descriptions to explain what each location means. Select a location and click the image to place its numbered pin, or enter X/Y percentages directly. Editing can replace the image, update the descriptions, or add/remove locations; omitting a replacement retains the current image. Deletion removes the image and derived search chunks. Previously stored chat source snapshots remain as historical references.
+
+Choose **Add location** after entering its details to collapse it into a read-only card. **New location** opens another location form. **Edit location** reopens an added location and enables moving its pin; **Save location changes** confirms edits and **Cancel location** restores its previous values. Existing locations start read-only when editing a map. Choose **Save map** to persist all location changes and refresh RAG indexing.
+
+Every map pin is a general campaign place/location. It does not need a town/city label to appear in general location questions. For specific requests mentioning towns, cities or villages, chat receives a current catalog filtered by those explicit whole words in each location's name or description, ignoring capitalization and accepting plurals. A map title does not classify its pins; `Downtown ruins` does not match `town`. If multiple types are requested, the catalog includes locations matching any requested type. This is literal labeling, so phrases such as `not a town` still contain the town word; it does not infer settlement type from geography or synonyms.
+
+The catalog is read directly from authorized campaign map records and remains available even if embeddings fail. It avoids treating the four most similar passages as a complete list. It includes at most 200 maps and 200 matching locations, within a 20,000-character catalog budget; descriptions are capped at 1,000 characters while type matching uses the full name and description. Omission/truncation metadata is supplied, and the model is instructed to disclose incomplete lists and to use this catalog for current map-location lists. Semantic passages continue supplying narrative context. No reindexing or migration is needed for this behavior change. Provider-free database checks cover general locations, town/city filtering, campaign isolation and embedding failure fallback; actual model compliance is not guaranteed by those checks.
+
+Map titles, descriptions and locations are chunked and embedded through the existing `IEmbeddingService`. Map passages and session passages compete in the same campaign-scoped cosine ranking and share the existing four-passage/2,000-chunk bounds. Chat references distinguish maps from sessions. Images are **not** sent to a vision model or embedded; the model can answer from the DM-authored text, not inspect image labels or infer roads, distances, or compass bearings from pins. This follows the [official text embedding guidance](https://developers.openai.com/api/docs/guides/embeddings).
+
+Indexing failures preserve the source with a retry status. An edited map whose indexing fails is excluded from retrieval, so its old chunks cannot provide stale facts. Updates, retries and deletion use PostgreSQL row locks to serialize operations on the same map. Indexing runs within the request/transaction; cancelled requests roll back changes. For timeouts or disconnected requests, reload before resubmitting. Background ingestion remains a future improvement.
+
+Images are bounded PostgreSQL `bytea` blobs, served through the authenticated campaign image endpoint and fetched through the existing Axios client. They are not public static assets. Upload validation checks file size and PNG/JPEG/WebP signatures; it does not fully decode the image, so corrupted files can fail browser display. Storing blobs keeps this first slice self-contained, but object storage would reduce database/backup growth at larger volume. Map embedding costs are not included in the displayed chat dollar estimate.
+
+`20261007004325_CampaignMaps` adds `CampaignMaps` and `MapKnowledgeChunks`, with cascade deletion and a unique map/position index. It preserves existing campaign records and is applied by normal API startup. No new packages or authentication changes are required.
+
+Main map files: `CampaignMapsController.cs`, `MapDtos.cs`, `CampaignMap.cs`, `MapKnowledgeService.cs`, `Maps.tsx` and `mapsApi.ts`. Shared retrieval, source DTOs, chat reference rendering, routing, DbContext and DI are extended for map sources.
+
+Verification commands:
+
+```powershell
+dotnet build DnDCampaignManager.sln -p:UseAppHost=false -p:OutputPath=bin/MapSolutionVerification/
+dotnet build tests/CampaignMembershipChecks/CampaignMembershipChecks.csproj -c MapVerification -p:UseAppHost=false
+dotnet tests/CampaignMembershipChecks/bin/MapVerification/net8.0/CampaignMembershipChecks.dll C:/Users/Taka/source/repos/DnDCampaignManager/DnDCampaignManager.Api
+dotnet ef migrations has-pending-model-changes --project DnDCampaignManager.Api --configuration MapVerification --no-build
+# From DnDCampaignManager.web:
+npx tsc -b
+npx vite build --outDir dist-map-verification
+npx eslint src/pages/Maps.tsx src/api/mapsApi.ts src/pages/AIChat.tsx src/App.tsx src/components/CampaignItem.tsx
+node --test tests/maps.test.cjs tests/campaignRag.test.cjs
+```
+
+Database checks use fake provider vectors, apply pending migrations, and roll back test fixtures. UI checks exercise multipart contracts, multiple location pins, failed-index retry, and player read-only rendering. They do not evaluate real embedding quality or constitute a manual browser layout check.
+
 1. Restart the API with your existing configuration. Startup applies pending migrations. DMs and players can use only their own campaign chats for campaigns they own or belong to. Legacy general chats remain saved but inaccessible.
 2. On the dashboard, open **Session Notes** for a campaign you own as DM.
 3. Enter a session number, date, title and narrative. For example: "Freya found a silver key beneath the ruined tower. The party promised Captain Mira they would investigate the abandoned mine."

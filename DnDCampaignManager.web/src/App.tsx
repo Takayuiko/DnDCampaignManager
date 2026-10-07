@@ -15,6 +15,7 @@ import AIChat from "./pages/AIChat";
 import SessionNotes from "./pages/SessionNotes";
 import DungeonMasters from "./pages/DungeonMasters";
 import Items from "./pages/Items";
+import Maps from "./pages/Maps";
 
 function App() {
     const { loading } = useAuth();
@@ -27,6 +28,7 @@ function App() {
             <Navbar />
 
             <Routes>
+                <Route path="/campaigns/:campaignId/maps" element={<ProtectedRoute><Maps /></ProtectedRoute>} />
                 <Route path="/campaigns/:campaignId/items" element={<ProtectedRoute><Items /></ProtectedRoute>} />
                 <Route path="/admin/dungeon-masters" element={<RoleRoute role="Admin"><DungeonMasters /></RoleRoute>} />
                 <Route path="/" element={<Landing />} />

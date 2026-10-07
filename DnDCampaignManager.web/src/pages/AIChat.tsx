@@ -41,10 +41,10 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
             )}
             {!isUser && !!message.sources?.length && (
                 <details className="mt-3 whitespace-normal text-xs">
-                    <summary className="cursor-pointer font-semibold">Retrieved session references ({message.sources.length})</summary>
+                    <summary className="cursor-pointer font-semibold">Retrieved campaign references ({message.sources.length})</summary>
                     {message.sources.map(source => (
                         <div key={source.label} className="mt-2 rounded border border-stone-200 bg-white p-2">
-                            <p className="font-semibold">[{source.label}] Session {source.sessionNumber}: {source.title}</p>
+                            <p className="font-semibold">[{source.label}] {source.mapId ? "Map" : `Session ${source.sessionNumber}`}: {source.title}</p>
                             <p className="mt-1 whitespace-pre-wrap">{source.excerpt}</p>
                         </div>
                     ))}

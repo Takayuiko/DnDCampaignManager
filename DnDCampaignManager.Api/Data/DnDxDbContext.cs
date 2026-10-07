@@ -26,9 +26,20 @@ namespace DnDCampingManager.Api.Data
         public DbSet<AIMessage> AIMessages => Set<AIMessage>();
         public DbSet<CampaignSessionNote> CampaignSessionNotes => Set<CampaignSessionNote>();
         public DbSet<CampaignKnowledgeChunk> CampaignKnowledgeChunks => Set<CampaignKnowledgeChunk>();
+        public DbSet<CampaignMap> CampaignMaps => Set<CampaignMap>();
+        public DbSet<MapKnowledgeChunk> MapKnowledgeChunks => Set<MapKnowledgeChunk>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            modelBuilder.Entity<CampaignMap>().HasOne(x => x.Campaign).WithMany()
+                .HasForeignKey(x => x.CampaignId).OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<CampaignMap>().Property(x => x.Title).HasMaxLength(160);
+            modelBuilder.Entity<CampaignMap>().Property(x => x.NormalizedTitle).HasMaxLength(160);
+            modelBuilder.Entity<CampaignMap>().HasIndex(x => new { x.CampaignId, x.NormalizedTitle }).IsUnique();
+            modelBuilder.Entity<MapKnowledgeChunk>().HasOne(x => x.Map).WithMany(x => x.Chunks)
+                .HasForeignKey(x => x.MapId).OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<MapKnowledgeChunk>().HasIndex(x => new { x.MapId, x.Position }).IsUnique();
+            modelBuilder.Entity<MapKnowledgeChunk>().Property(x => x.Embedding).HasColumnType("real[]");
             modelBuilder.Entity<CampaignItem>().HasAlternateKey(x => new { x.Id, x.CampaignId });
             modelBuilder.Entity<CampaignItem>().HasIndex(x => new { x.CampaignId, x.NormalizedName }).IsUnique();
             modelBuilder.Entity<CampaignItem>().HasOne(x => x.Campaign).WithMany()
