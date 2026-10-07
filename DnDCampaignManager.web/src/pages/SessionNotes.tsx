@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { getCampaigns, type CampaignSummary } from "../api/campaignApi";
@@ -25,6 +25,8 @@ export default function SessionNotes() {
     const canManage = user?.role === "DM" && user.id === campaign?.ownerId;
     const [audio, setAudio] = useState<File | null>(null);
     const [transcribing, setTranscribing] = useState(false);
+    const scope = useRef<AbortController | null>(null);
+    const transcription = useRef<AbortController | null>(null);
 
     async function transcribe() {
         if (!audio || busy || !canManage) return;
@@ -34,61 +36,81 @@ export default function SessionNotes() {
         }
         if (content.length > 0 && !confirm("Replace the current draft notes with the transcript?")) return;
         setBusy(true); setTranscribing(true); setError(""); setNotice("");
+        const controller = new AbortController();
+        transcription.current = controller;
         try {
-            const response = await transcribeSessionAudio(campaignId, audio);
+            const response = await transcribeSessionAudio(campaignId, audio, controller.signal);
+            if (controller.signal.aborted) return;
             setContent(response.data.text);
             setNotice("Transcript ready. Review names and remove out-of-game discussion, then Save session to add it to campaign knowledge.");
         } catch (requestError) {
+            if (controller.signal.aborted) return;
             setError(extractApiError(requestError, "Unable to transcribe the recording. Your existing draft is unchanged. Please try again."));
-        } finally { setBusy(false); setTranscribing(false); }
+        } finally {
+            if (transcription.current === controller) { transcription.current = null; setBusy(false); setTranscribing(false); }
+        }
     }
 
     useEffect(() => {
         let active = true;
-        void Promise.all([getCampaigns(), getSessionNotes(campaignId)]).then(([list, sessions]) => {
+        const controller = new AbortController();
+        scope.current = controller;
+        setBusy(false); setTranscribing(false); setLoading(true);
+        void Promise.all([getCampaigns(controller.signal), getSessionNotes(campaignId, controller.signal)]).then(([list, sessions]) => {
             if (!active) return;
             setCampaign(list.data.find(c => c.id === campaignId) ?? null);
             setNotes(sessions.data);
             setSessionNumber(Math.max(0, ...sessions.data.map(n => n.sessionNumber)) + 1);
         }).catch(() => { if (active) setError("Unable to load session notes. Check your campaign access and reload."); })
             .finally(() => { if (active) setLoading(false); });
-        return () => { active = false; };
+        return () => {
+            active = false; controller.abort();
+            transcription.current?.abort(); transcription.current = null;
+        };
     }, [campaignId]);
 
     async function save(event: FormEvent) {
         event.preventDefault();
         if (busy || !canManage) return;
         setBusy(true); setError(""); setNotice("");
+        const controller = scope.current;
         try {
-            const response = await createSessionNote(campaignId, { sessionNumber, title: title.trim(), content: content.trim(), playedOn });
+            const response = await createSessionNote(campaignId, { sessionNumber, title: title.trim(), content: content.trim(), playedOn }, controller?.signal);
+            if (controller?.signal.aborted) return;
             setNotes(current => [response.data, ...current].sort((a, b) => b.sessionNumber - a.sessionNumber || b.id - a.id));
             setTitle(""); setContent(""); setSessionNumber(current => current + 1);
             setNotice(response.data.indexStatus === "ready" ? "Session saved and ready for campaign chat."
+                : response.data.indexStatus === "pending" ? "Session saved. Indexing is pending; use Retry indexing if it does not finish."
                 : "Session saved. Search indexing did not finish; use Retry indexing below.");
-        } catch (requestError) { setError(extractApiError(requestError, "Unable to save session notes. Please try again.")); }
-        finally { setBusy(false); }
+        } catch (requestError) { if (!controller?.signal.aborted) setError(extractApiError(requestError, "Unable to save session notes. Please try again.")); }
+        finally { if (!controller?.signal.aborted) setBusy(false); }
     }
 
     async function retry(noteId: number) {
         setBusy(true); setError(""); setNotice("");
+        const controller = scope.current;
         try {
-            const response = await indexSessionNote(campaignId, noteId);
+            const response = await indexSessionNote(campaignId, noteId, controller?.signal);
+            if (controller?.signal.aborted) return;
             setNotes(current => current.map(note => note.id === noteId ? response.data : note));
             setNotice(response.data.indexStatus === "ready" ? "Session is ready for campaign chat."
+                : response.data.indexStatus === "pending" ? "Indexing is already in progress. Reload to check its status."
                 : "Notes are saved, but indexing failed. Please try again later.");
-        } catch { setError("Unable to index these notes. Please try again."); }
-        finally { setBusy(false); }
+        } catch (requestError) { if (!controller?.signal.aborted) setError(extractApiError(requestError, "Unable to index these notes. Please try again.")); }
+        finally { if (!controller?.signal.aborted) setBusy(false); }
     }
 
     async function remove(noteId: number) {
         if (!confirm("Delete these session notes and their search index?")) return;
         setBusy(true); setError(""); setNotice("");
+        const controller = scope.current;
         try {
-            await deleteSessionNote(campaignId, noteId);
+            await deleteSessionNote(campaignId, noteId, controller?.signal);
+            if (controller?.signal.aborted) return;
             setNotes(current => current.filter(note => note.id !== noteId));
             setNotice("Session notes deleted. Earlier chat replies retain their retrieved references.");
-        } catch { setError("Unable to delete these notes."); }
-        finally { setBusy(false); }
+        } catch (requestError) { if (!controller?.signal.aborted) setError(extractApiError(requestError, "Unable to delete these notes.")); }
+        finally { if (!controller?.signal.aborted) setBusy(false); }
     }
 
     return <main className="min-h-screen bg-amber-50 px-4 py-6">
@@ -112,6 +134,11 @@ export default function SessionNotes() {
                         className="rounded bg-stone-700 px-3 py-2 text-sm text-white disabled:opacity-50">
                         {transcribing ? "Transcribing… this may take several minutes" : "Transcribe audio"}
                     </button>
+                    {transcribing && <button type="button" className="ml-2 rounded border px-3 py-2 text-sm"
+                        onClick={() => {
+                            transcription.current?.abort(); transcription.current = null;
+                            setBusy(false); setTranscribing(false); setNotice("Transcription cancelled. Your draft is unchanged.");
+                        }}>Cancel transcription</button>}
                 </div>
                 <div className="flex flex-wrap gap-4">
                     <label className="text-sm">Session number

@@ -1,23 +1,9 @@
+import { extractApiError } from "../Utils/apiError";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { createCampaign } from "../api/campaignApi";
 import Button from "../components/UI/Button";
 
-function extractApiError(err: any, fallback: string) {
-    const data = err?.response?.data;
-    if (typeof data === "string") return data;
-
-    if (data?.errors && typeof data.errors === "object") {
-        const parts: string[] = [];
-        for (const key of Object.keys(data.errors)) {
-            const msgs = data.errors[key];
-            if (Array.isArray(msgs)) parts.push(...msgs);
-        }
-        if (parts.length) return parts.join(" ");
-    }
-
-    return fallback;
-}
 
 export default function CreateCampaign() {
     const navigate = useNavigate();
@@ -36,7 +22,7 @@ export default function CreateCampaign() {
         try {
             await createCampaign({ name, description });
             navigate("/dashboard");
-        } catch (err: any) {
+        } catch (err: unknown) {
             setError(extractApiError(err, "Failed to create campaign."));
         } finally {
             setSubmitting(false);

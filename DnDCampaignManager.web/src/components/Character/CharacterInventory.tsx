@@ -21,17 +21,18 @@ export default function CharacterInventory({ campaignId, characterId, readOnly =
 
     useEffect(() => {
         let active = true;
+        const controller = new AbortController();
         setLoading(true); setInventory(null); setCatalog([]); setError(null);
         const load = async () => {
             try {
-                const response = await getInventory(campaignId, characterId);
-                const items = response.data.canAssign ? (await getItems(campaignId)).data.items : [];
+                const response = await getInventory(campaignId, characterId, controller.signal);
+                const items = response.data.canAssign ? (await getItems(campaignId, controller.signal)).data.items : [];
                 if (active) { setInventory(response.data); setCatalog(items); }
             } catch (err: unknown) { if (active) setError(extractApiError(err, "Unable to load inventory.")); }
             finally { if (active) setLoading(false); }
         };
         void load();
-        return () => { active = false; };
+        return () => { active = false; controller.abort(); };
     }, [campaignId, characterId]);
 
     const assign = async (event: React.FormEvent) => {

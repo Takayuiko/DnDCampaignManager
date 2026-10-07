@@ -2,15 +2,16 @@
 
 ## What is implemented
 
-The campaign AI chat can call three read-only application functions:
+The campaign AI chat can call four read-only application functions:
 
 - `GetCampaignState`: campaign name, description, character count and session-note count.
 - `ListCharacters`: up to 100 shared characters, including IDs, names, classes, races and levels.
 - `GetCharacter`: current identity, ability scores, armor class, speed and hit points for one character.
+- `GetCharacterInventory`: live assignments, quantities, descriptions, weights, costs and notes, restricted to the character’s player or campaign DM; bounded results report omitted entries.
 
-These are explicit DTO projections, not serialized EF entities. They do not expose account emails, credentials, refresh tokens, other users' conversations or database queries. Inventory, NPCs and quests are not implemented as tools because their application models and flows are not ready for this slice.
+These are explicit DTO projections, not serialized EF entities. They do not expose account emails, credentials, refresh tokens, other users' conversations or database queries. Campaign item catalogs and character inventories are implemented (see [items](items.md)), and `GetCharacterInventory` reads them on demand. Inventory is not included in the general shared context or embedded. NPC and quest models are not implemented.
 
-Session-note retrieval continues through the existing RAG pipeline. Tools complement RAG with targeted reads of current structured data; they do not make generated text or chat questions part of campaign knowledge.
+Session-note and authored map-text retrieval continue through the existing RAG pipeline. Tools complement RAG with targeted reads of current structured data; they do not make generated text or chat questions part of campaign knowledge.
 
 ## How the chat calls tools
 
@@ -20,17 +21,17 @@ Session-note retrieval continues through the existing RAG pipeline. Tools comple
 
 Both streaming and nonstreaming paths support tool continuations. A request allows at most four tool rounds and eight tool executions; exceeding either limit produces the existing friendly AI failure behavior. Calls execute sequentially because a scoped EF DbContext is not safe for parallel operations. Usage and estimated model cost sum every response in the loop, including tool-selection requests. Existing retrieval usage remains separately reported.
 
-Example: ask “What is Freya's current HP?” The model can call `ListCharacters`, find Freya's ID, call `GetCharacter`, then answer from the live result. Tools are optional: the existing RAG context may already contain enough information to answer without a call. No tool can change HP or other campaign data.
+Example: ask “What is Freya's current HP?” The model can call `ListCharacters`, find Freya's ID, call `GetCharacter`, then answer from the live result. Tools are optional: the existing RAG context may already contain enough information to answer without a call. For possessions, the model should find the character with `ListCharacters`, then call `GetCharacterInventory`; it must not infer possessions from class or older chat. No tool can change HP or other campaign data. See [request budgets and deadlines](AI_LIMITS.md).
 
 Successful executions log tool name, campaign ID and user ID, without logging arguments, returned data or credentials. The chat UI retains its existing message/usage display; it does not persist a separate tool transcript.
 
 ## Shared authorization
 
-`CampaignToolService` checks current campaign ownership or membership on every data operation, using the same access service as RAG. A character query additionally filters by campaign ID in SQL. Revoked members cannot continue reading through tools. A DM/admin has no global campaign bypass. Character facts are shared with campaign members consistently with the existing RAG context; private account and chat data remain private.
+`CampaignToolService` checks current campaign ownership or membership on every data operation, using the same access service as RAG. A character query additionally filters by campaign ID in SQL. Revoked members cannot continue reading through tools. A DM/admin has no global campaign bypass. Character stats are shared with campaign members consistently with RAG. Inventory requires the character’s player or campaign owner with the current DM role, matching the inventory API; other members cannot read it. Private account and chat data remain private.
 
 ## What MCP adds
 
-The official `ModelContextProtocol.AspNetCore` SDK hosts a stateless Streamable HTTP server at `/mcp`, in the same API process. `CampaignMcpTools` adapts the three functions to MCP and calls the same `CampaignToolService`. No separate database-access implementation is introduced.
+The official `ModelContextProtocol.AspNetCore` SDK hosts a stateless Streamable HTTP server at `/mcp`, in the same API process. `CampaignMcpTools` adapts the four functions to MCP and calls the same `CampaignToolService`. No separate database-access implementation is introduced.
 
 MCP clients can discover the tools using `tools/list` and execute them using `tools/call`. The tools declare read-only, non-destructive and closed-world annotations. These describe behavior to clients; authorization is enforced independently in application code.
 
@@ -72,7 +73,7 @@ Run the focused checks against the local development PostgreSQL database:
 
 ```powershell
 dotnet build tests/ToolingChecks/ToolingChecks.csproj -c ToolVerification -p:UseAppHost=false
-dotnet tests/ToolingChecks/bin/ToolVerification/net8.0/ToolingChecks.dll C:/Users/Taka/source/repos/DnDCampaignManager/DnDCampaignManager.Api
+dotnet tests/ToolingChecks/bin/ToolVerification/net8.0/ToolingChecks.dll DnDCampaignManager.Api
 ```
 
 The checks use transaction-scoped fixtures that roll back, fake OpenAI HTTP responses, and a temporary localhost MCP server. No paid OpenAI calls are made. They cover scoped reads, invalid arguments, cross-campaign IDs, membership revocation, streaming/nonstreaming continuations, reasoning replay, aggregated usage, loop limits, and MCP authentication/discovery/execution. A real-model smoke test is still useful after restart/deployment; model tool choice is not deterministic.

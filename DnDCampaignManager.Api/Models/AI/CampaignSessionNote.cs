@@ -13,6 +13,8 @@ public class CampaignSessionNote
     public DateOnly PlayedOn { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public string IndexStatus { get; set; } = "pending";
+    public Guid? IndexLeaseId { get; set; }
+    public DateTime? IndexLeaseUntil { get; set; }
     public string? EmbeddingModel { get; set; }
     public int EmbeddingDimensions { get; set; }
     public int EmbeddingInputTokens { get; set; }

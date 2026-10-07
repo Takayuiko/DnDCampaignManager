@@ -31,6 +31,9 @@ namespace DnDCampingManager.Api.Data
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            modelBuilder.Entity<RefreshToken>().Property(x => x.TokenHash).HasMaxLength(64);
+            modelBuilder.Entity<RefreshToken>().Property(x => x.ReplacedByTokenHash).HasMaxLength(64);
+            modelBuilder.Entity<RefreshToken>().HasIndex(x => x.TokenHash).IsUnique();
             modelBuilder.Entity<CampaignMap>().HasOne(x => x.Campaign).WithMany()
                 .HasForeignKey(x => x.CampaignId).OnDelete(DeleteBehavior.Cascade);
             modelBuilder.Entity<CampaignMap>().Property(x => x.Title).HasMaxLength(160);
@@ -81,6 +84,9 @@ namespace DnDCampingManager.Api.Data
             modelBuilder.Entity<User>()
                 .HasIndex(u => u.Email)
                 .IsUnique();
+            modelBuilder.Entity<User>().Property(u => u.NormalizedEmail)
+                .HasComputedColumnSql("lower(btrim(\"Email\"))", stored: true);
+            modelBuilder.Entity<User>().HasIndex(u => u.NormalizedEmail).IsUnique();
 
             modelBuilder.Entity<Campaign>()
                 .HasOne(c => c.Owner)
@@ -155,7 +161,7 @@ namespace DnDCampingManager.Api.Data
 
             modelBuilder.Entity<CharacterClassOption>()
                 .HasOne(x => x.User)
-                .WithMany()
+                .WithMany(u => u.CharacterClassOptions)
                 .HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
 

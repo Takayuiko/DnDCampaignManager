@@ -1,3 +1,4 @@
+import { isAxiosError } from "axios";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
     createConversation,
@@ -81,6 +82,9 @@ export default function AIChat() {
     const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]);
     const [campaignError, setCampaignError] = useState("");
     const initialization = useRef<Promise<{ items: ConversationSummary[]; active: Conversation | null }> | null>(null);
+    const selectionController = useRef<AbortController | null>(null);
+    const streamController = useRef<AbortController | null>(null);
+    const clearController = useRef<AbortController | null>(null);
     const selectedCampaignId = String(conversation?.campaignId ?? "");
     const selectionRequest = useRef(0);
 
@@ -107,19 +111,21 @@ export default function AIChat() {
 
     useEffect(() => {
         let active = true;
-        void getCampaigns().then(response => { if (active) setCampaigns(response.data); }).catch(() => {
+        const controller = new AbortController();
+        void getCampaigns(controller.signal).then(response => { if (active) setCampaigns(response.data); }).catch(() => {
             if (active) setCampaignError("Unable to load campaigns. Reload to try again.");
         });
-        return () => { active = false; };
+        return () => { active = false; controller.abort(); };
     }, []);
 
     useEffect(() => {
         let active = true;
-        void getAIStatus().then(response => { if (active) setStatus(response.data); }).catch(() => {});
+        const controller = new AbortController();
+        void getAIStatus(controller.signal).then(response => { if (active) setStatus(response.data); }).catch(() => {});
         initialization.current ??= (async () => {
-            const defaultResponse = await getDefaultConversation();
+            const defaultResponse = await getDefaultConversation(controller.signal);
             const [list, selected] = await Promise.all([
-                getConversations(), defaultResponse.data ? getConversation(defaultResponse.data.id) : Promise.resolve(null)
+                getConversations(controller.signal), defaultResponse.data ? getConversation(defaultResponse.data.id, controller.signal) : Promise.resolve(null)
             ]);
             return { items: list.data, active: selected?.data ?? null };
         })();
@@ -133,18 +139,32 @@ export default function AIChat() {
         }).finally(() => {
             if (active) setLoadingConversation(false);
         });
-        return () => { active = false; };
+        return () => { active = false; controller.abort(); initialization.current = null; };
     }, [initializationAttempt]);
+
+    useEffect(() => () => {
+        selectionRequest.current++;
+        selectionController.current?.abort();
+        streamController.current?.abort();
+        streamController.current = null;
+        clearController.current?.abort();
+    }, []);
 
     async function selectCampaign(campaignId: number) {
         const requestId = ++selectionRequest.current;
+        selectionController.current?.abort();
+        streamController.current?.abort();
+        streamController.current = null;
+        setLoading(false);
+        const controller = new AbortController();
+        selectionController.current = controller;
         setLoadingConversation(true);
         setConversation(null);
         setInput("");
         setError("");
         try {
-            const response = await createConversation(undefined, campaignId);
-            const selected = await getConversation(response.data.id);
+            const response = await createConversation(undefined, campaignId, controller.signal);
+            const selected = await getConversation(response.data.id, controller.signal);
             if (requestId !== selectionRequest.current) return;
             if (selected.data.campaignId !== campaignId) throw new Error("Campaign mismatch");
             setConversation(selected.data);
@@ -158,19 +178,25 @@ export default function AIChat() {
 
     async function clearConversation() {
         if (!conversation || loading || loadingConversation) return;
+        const controller = new AbortController();
+        clearController.current = controller;
         setLoadingConversation(true);
         try {
-            const response = await deleteConversation(conversation.id);
+            const response = await deleteConversation(conversation.id, controller.signal);
+            if (controller.signal.aborted) return;
             if (!response.data) throw new Error("Missing campaign chat");
             const replacement = response.data;
             setConversations(current => current.map(item => item.id === replacement.id ? replacement : item));
             setConversation({ ...replacement, messages: [] });
             setInput("");
             setError("");
-        } catch {
-            setError("Unable to clear this campaign chat.");
+        } catch (requestError) {
+            if (controller.signal.aborted) return;
+            setError(isAxiosError(requestError) && requestError.response?.status === 409
+                ? "This conversation has an active request. Wait for it to finish before clearing messages."
+                : "Unable to clear this campaign chat.");
         } finally {
-            setLoadingConversation(false);
+            if (!controller.signal.aborted) setLoadingConversation(false);
         }
     }
 
@@ -178,12 +204,14 @@ export default function AIChat() {
         event.preventDefault();
 
         const message = input.trim();
-        if (loading || loadingConversation || !conversation) return;
+        if (loading || loadingConversation || !conversation || status?.configured === false) return;
         if (!message) {
             setError("Enter a message before sending.");
             return;
         }
         followMessages.current = true;
+        const controller = new AbortController();
+        streamController.current = controller;
 
         setError("");
         setInput("");
@@ -226,6 +254,7 @@ export default function AIChat() {
                 conversation.id,
                 message,
                 token => {
+                    if (controller.signal.aborted) return;
                     setConversation(current => {
                         if (!current || current.id !== conversation.id) return current;
 
@@ -239,8 +268,10 @@ export default function AIChat() {
                         }
                         return { ...current, messages };
                     });
-                }
+                },
+                controller.signal
             );
+            if (streamController.current !== controller) return;
 
             setConversation(current => {
                 if (!current || current.id !== conversation.id) return current;
@@ -283,11 +314,13 @@ export default function AIChat() {
                     : item
             ));
         } catch (requestError) {
+            // Leaving this chat must not update another page or conversation.
+            if (streamController.current !== controller) return;
             const errorMessage = requestError instanceof Error
                 ? requestError.message
                 : "The AI request failed.";
 
-            setError(errorMessage);
+            setError(controller.signal.aborted ? "Generation stopped. Reload the conversation before sending again." : errorMessage);
             setConversation(current => current
                 ? {
                     ...current,
@@ -298,7 +331,7 @@ export default function AIChat() {
                 : current
             );
         } finally {
-            setLoading(false);
+            if (streamController.current === controller) { streamController.current = null; setLoading(false); }
         }
     }
 
@@ -368,6 +401,9 @@ export default function AIChat() {
                                         : "Select a campaign to open its chat."}
                                 </div>
                             </div>
+                            {status?.configured === false && (
+                                <p className="mx-5 mt-4 text-sm text-amber-800">AI chat is unavailable until OpenAI is configured on the server. Your saved conversations remain available.</p>
+                            )}
                             {loadingConversation && (
                                 <span className="text-xs text-stone-500">Loading...</span>
                             )}
@@ -399,16 +435,18 @@ export default function AIChat() {
 
                         <form onSubmit={sendMessage} className="border-t border-stone-200 p-4">
                             <div className="flex gap-3">
+                                {loading && <button type="button" onClick={() => streamController.current?.abort()}
+                                    className="rounded-xl border border-stone-400 px-4 py-3 font-semibold">Stop</button>}
                                 <input
                                     value={input}
                                     onChange={event => setInput(event.target.value)}
                                     placeholder="Ask the Dungeon Master..."
-                                    disabled={loading || loadingConversation || !conversation}
+                                    disabled={loading || loadingConversation || !conversation || status?.configured === false}
                                     className="min-w-0 flex-1 rounded-xl border border-stone-300 bg-white px-4 py-3 text-stone-800 outline-none focus:border-stone-500 focus:ring-2 focus:ring-amber-200 disabled:bg-stone-100"
                                 />
                                 <button
                                     type="submit"
-                                    disabled={loading || loadingConversation || !conversation}
+                                    disabled={loading || loadingConversation || !conversation || status?.configured === false}
                                     className="rounded-xl bg-stone-800 px-5 py-3 font-semibold text-white shadow hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                     {loading ? "Thinking..." : "Send"}

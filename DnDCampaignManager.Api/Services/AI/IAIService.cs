@@ -4,6 +4,7 @@ namespace DnDCampaignManager.Api.Services.AI;
 
 public interface IAIService
 {
+    bool IsAvailable => true;
     string Model { get; }
 
     Task<AICompletionResult> GetChatResponseAsync(

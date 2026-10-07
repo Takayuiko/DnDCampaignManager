@@ -1,6 +1,6 @@
 # Phase 2 - Persistent AI Chat, Streaming and Usage Tracking
 
-Phase 2 builds on the PostgreSQL + OpenAI foundation from Phase 1.
+This guide describes the current persisted chat built on the [PostgreSQL setup](PHASE1_SETUP.md). Later additions include campaign RAG and read-only tools; see [RAG setup](RAG_SETUP.md) and [AI tools/MCP](AI_TOOLS_AND_MCP.md).
 
 ## What changed
 
@@ -20,24 +20,22 @@ Phase 2 builds on the PostgreSQL + OpenAI foundation from Phase 1.
 
 ### Frontend
 
-- Conversation list.
-- Create conversation.
-- Delete conversation.
+- Campaign selector, with one personal conversation per user per accessible campaign.
+- Automatic conversation initialization.
+- Clear conversation history while retaining the conversation and campaign association.
 - Load persisted conversations.
 - Stream assistant responses token-by-token.
 - Display token count, estimated cost and response duration.
 
 ## Database migration
 
-The Phase 1 project intentionally did not contain a provider-specific migration. After adding the Phase 2 models, create a new migration from the API project:
+`Phase2AIConversations` and `OneChatPerCampaign` are already committed. Apply existing migrations from the repository root:
 
 ```powershell
-cd DnDCampaignManager.Api
-dotnet ef migrations add Phase2AIConversations
-dotnet ef database update
+dotnet ef database update --project DnDCampaignManager.Api
 ```
 
-The API also calls `Database.Migrate()` at startup, so future migrations will be applied automatically after they have been created and committed.
+The API also applies pending migrations at startup. Do not generate another setup migration.
 
 ## OpenAI pricing configuration
 
@@ -56,7 +54,7 @@ These values are only used to calculate an **estimated** application-side cost. 
 
 ## OpenAI key
 
-Keep the API key in .NET User Secrets or an environment variable. Do not put it in source control.
+An OpenAI key is optional for startup and viewing saved conversations. Sending and streaming require a configured provider. Keep the key in .NET User Secrets or an environment variable, outside source control. Run the command below from `DnDCampaignManager.Api`.
 
 ```powershell
 dotnet user-secrets set "OpenAI:ApiKey" "YOUR_KEY"
@@ -85,7 +83,7 @@ npm install
 npm run dev
 ```
 
-Then open **AI Assistant** after logging in.
+Run the API and frontend commands in separate terminals from the repository root. Then open **AI Assistant** after logging in and choose an accessible campaign. General chats are inaccessible.
 
 ## API endpoints
 
@@ -93,11 +91,16 @@ Then open **AI Assistant** after logging in.
 GET    /api/ai/status
 GET    /api/ai/conversations
 POST   /api/ai/conversations
+POST   /api/ai/conversations/default
 GET    /api/ai/conversations/{id}
 DELETE /api/ai/conversations/{id}
 POST   /api/ai/conversations/{id}/messages
 POST   /api/ai/conversations/{id}/messages/stream
 ```
+
+`POST /conversations` requires an accessible campaign and returns that user's existing conversation when present. `/default` initializes the first accessible campaign, or returns no content if there is none. The DELETE route clears messages and resets the title; it preserves the conversation ID and campaign. Access requires both conversation ownership and current campaign membership/ownership.
+
+Sending, streaming and clearing use a PostgreSQL session advisory lock per conversation. An overlapping operation returns 409 instead of racing. Provider calls do not hold a database transaction open.
 
 The streaming endpoint returns SSE events:
 
@@ -111,27 +114,7 @@ data: {"conversationId":"...","messageId":123,"model":"gpt-5.2","usage":{...}}
 
 ## Important architectural decision
 
-Conversation history is stored and managed by **our application**, not by the frontend. This is intentional. It gives us a clean foundation for the next phases:
-
-```text
-Phase 2
-PostgreSQL conversation state
-        ↓
-Phase 3
-Structured AI output
-        ↓
-Phase 4
-RAG / embeddings / vector search
-        ↓
-Phase 5
-Application tools
-        ↓
-Phase 6
-Agents
-        ↓
-Phase 7
-MCP
-```
+Conversation history is stored and managed by **our application**, not by the frontend. This is intentional. Current campaign context combines live character facts, session/map retrieval and authorized read-only tools. These services read controlled data; generated messages are not automatically campaign knowledge and tools cannot modify campaign state.
 
 ## Production frontend build
 

@@ -1,4 +1,5 @@
-﻿using DnDCampingManager.Api.Data;
+using DnDCampaignManager.Api.Services;
+using DnDCampingManager.Api.Data;
 using DnDCampaignManager.Api.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -35,9 +36,7 @@ namespace DnDCampaignManager.Api.Controllers
             var userId = GetUserId();
             if (userId <= 0) return Unauthorized();
 
-            var hasAccess = await _dnDxDbContext.Campaigns.AnyAsync(c =>
-                c.Id == campaignId &&
-                (c.OwnerId == userId || c.Players.Any(p => p.UserId == userId)));
+            var hasAccess = await CampaignAuthorization.CanAccessAsync(_dnDxDbContext, campaignId, userId);
 
             if (!hasAccess) return Forbid();
 
@@ -60,9 +59,7 @@ namespace DnDCampaignManager.Api.Controllers
             var userId = GetUserId();
             if (userId <= 0) return Unauthorized();
 
-            var hasAccess = await _dnDxDbContext.Campaigns.AnyAsync(c =>
-                c.Id == campaignId &&
-                (c.OwnerId == userId || c.Players.Any(p => p.UserId == userId)));
+            var hasAccess = await CampaignAuthorization.CanAccessAsync(_dnDxDbContext, campaignId, userId);
 
             if (!hasAccess) return Forbid();
 

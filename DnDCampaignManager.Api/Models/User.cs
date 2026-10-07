@@ -7,6 +7,7 @@ namespace DnDCampingManager.Api.Models
     {
         public int Id { get; set; }
         public string Email { get; set; } = null!;
+        public string NormalizedEmail { get; private set; } = null!;
         public string PasswordHash { get; set; } = null!;
         public string Role { get; set; } = Roles.Player;
         public bool IsAdmin { get; set; }

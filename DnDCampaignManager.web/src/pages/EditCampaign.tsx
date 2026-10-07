@@ -50,7 +50,7 @@ export default function EditCampaign() {
     const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
     const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
-    const loadCampaign = async () => {
+    const loadCampaign = async (signal?: AbortSignal) => {
         if (!Number.isInteger(campaignId) || campaignId <= 0) {
             throw new Error("Invalid campaign id.");
         }
@@ -58,7 +58,8 @@ export default function EditCampaign() {
         setError(null);
         setPlayersError(null);
 
-        const res = await getCampaign(campaignId);
+        const res = await getCampaign(campaignId, signal);
+        if (signal?.aborted) return;
         const c: CampaignResponse = res.data;
 
         setName(c.name ?? "");
@@ -67,19 +68,22 @@ export default function EditCampaign() {
     };
 
     useEffect(() => {
+        const controller = new AbortController();
         const run = async () => {
             try {
                 setLoading(true);
-                await loadCampaign();
+                await loadCampaign(controller.signal);
             } catch (err: unknown) {
+                if (controller.signal.aborted) return;
                 alert(extractApiError(err, "Campaign not found"));
                 navigate("/dashboard");
             } finally {
-                setLoading(false);
+                if (!controller.signal.aborted) setLoading(false);
             }
         };
 
         run();
+        return () => controller.abort();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [campaignId]);
 

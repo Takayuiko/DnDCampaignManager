@@ -1,47 +1,15 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { getCampaigns, type CampaignSummary } from "../api/campaignApi";
-import { getMaps, getMapImage, saveMap, deleteMap, indexMap, type CampaignMap, type MapDraft, type MapLocation } from "../api/mapsApi";
+import { getMaps, saveMap, deleteMap, indexMap, type CampaignMap, type MapDraft, type MapLocation } from "../api/mapsApi";
 import Button from "../components/UI/Button";
+import MapImage from "../components/Maps/MapImage";
 import { extractApiError } from "../Utils/apiError";
 
 const newLocation = (): MapLocation => ({ name: "", description: "", x: 50, y: 50 });
 const emptyDraft = (): MapDraft => ({ title: "", description: "", locations: [newLocation()] });
 const field = "w-full rounded border border-stone-300 bg-white p-2";
-
-function MapImage({ campaignId, map, file, locations, onPin, thumbnail = false }: {
-    campaignId: number; map: CampaignMap | null; file?: File | null; locations: MapLocation[];
-    onPin?: (x: number, y: number) => void; thumbnail?: boolean;
-}) {
-    const [url, setUrl] = useState("");
-    const [error, setError] = useState("");
-    useEffect(() => {
-        let active = true;
-        let objectUrl = "";
-        void Promise.resolve().then(async () => {
-            if (!active) return;
-            setUrl(""); setError("");
-            const blob = file ?? (map ? (await getMapImage(campaignId, map.id)).data : null);
-            if (!active || !blob) return;
-            objectUrl = URL.createObjectURL(blob); setUrl(objectUrl);
-        }).catch(() => { if (active) setError("Unable to load map image. Reload to try again."); });
-        return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-    }, [campaignId, map, file]);
-    if (error) return <p role="alert">{error}</p>;
-    if (!url) return <p>{map ? "Loading image…" : "Choose an image to place location pins."}</p>;
-    return <div className={thumbnail ? "relative flex h-32 w-full items-center justify-center overflow-hidden rounded-lg bg-stone-100" : "relative inline-block max-w-full"} onClick={event => {
-        if (!onPin) return;
-        const bounds = event.currentTarget.getBoundingClientRect();
-        onPin(Math.max(0, Math.min(100, (event.clientX - bounds.left) / bounds.width * 100)),
-            Math.max(0, Math.min(100, (event.clientY - bounds.top) / bounds.height * 100)));
-    }}>
-        <img src={url} alt={map?.title ?? "Map draft"} className={thumbnail ? "h-full w-full object-contain" : "block max-h-[650px] max-w-full"} onError={() => setError("This image could not be displayed. Choose another image.")} />
-        {!thumbnail && locations.map((location, i) => <span key={i} title={location.name || `Location ${i + 1}`}
-            style={{ left: `${location.x}%`, top: `${location.y}%`, transform: "translate(-50%, -50%)" }}
-            className="pointer-events-none absolute flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-red-800 text-sm font-bold text-white shadow">{i + 1}</span>)}
-    </div>;
-}
 
 export default function Maps() {
     const { campaignId: routeId } = useParams();
@@ -62,16 +30,43 @@ export default function Maps() {
     const [tab, setTab] = useState<"view" | "manage">("view");
     const [editorOpen, setEditorOpen] = useState(false);
     const canManage = user?.role === "DM" && user.id === campaign?.ownerId;
+    const scope = useRef<AbortController | null>(null);
     useEffect(() => {
         let active = true;
+        const controller = new AbortController();
+        scope.current = controller;
+        setBusy(false);
         setEditorOpen(false); setTab("view"); setLoading(true); setError(""); setMaps([]); setCampaign(null);
         setEditing(null); setDraft(emptyDraft()); setImage(null); setSelectedPin(0); setLocationBeforeEdit(null); setFormKey(x => x + 1);
-        void Promise.all([getCampaigns(), getMaps(campaignId)]).then(([campaigns, response]) => {
+        void Promise.all([getCampaigns(controller.signal), getMaps(campaignId, controller.signal)]).then(([campaigns, response]) => {
             if (active) { setCampaign(campaigns.data.find(x => x.id === campaignId) ?? null); setMaps(response.data); }
         }).catch(() => { if (active) setError("Unable to load maps. Check campaign access and reload."); })
             .finally(() => { if (active) setLoading(false); });
-        return () => { active = false; };
+        return () => { active = false; controller.abort(); };
     }, [campaignId]);
+    const hasPendingMaps = maps.some(map => map.indexStatus === "pending");
+    useEffect(() => {
+        if (!hasPendingMaps || busy) return;
+        let active = true;
+        const controller = new AbortController();
+        let fetching = false;
+        const timer = setInterval(() => {
+            if (fetching) return;
+            fetching = true;
+            void getMaps(campaignId, controller.signal).then(response => {
+                if (active) setMaps(current => {
+                    // Preserve unchanged card objects so polling does not reload previews.
+                    const refreshed = response.data.map(map => {
+                        const previous = current.find(x => x.id === map.id);
+                        return previous && JSON.stringify(previous) === JSON.stringify(map) ? previous : map;
+                    });
+                    return refreshed.length === current.length && refreshed.every((map, i) => map === current[i]) ? current : refreshed;
+                });
+            }).catch(() => { /* Keep saved maps visible; the next poll can retry. */ })
+                .finally(() => { fetching = false; });
+        }, 3000);
+        return () => { active = false; controller.abort(); clearInterval(timer); };
+    }, [campaignId, hasPendingMaps, busy]);
     function reset() {
         setEditorOpen(false);
         setEditing(null); setDraft(emptyDraft()); setImage(null); setSelectedPin(0); setLocationBeforeEdit(null); setFormKey(x => x + 1);
@@ -86,29 +81,38 @@ export default function Maps() {
         if (draft.locations.length === 0) { setError("Add at least one location."); return; }
         if (!editing && !image) { setError("Choose a map image."); return; }
         setBusy(true); setError(""); setNotice("");
+        const controller = scope.current;
         try {
-            const response = await saveMap(campaignId, editing?.id ?? null, draft, image);
+            const response = await saveMap(campaignId, editing?.id ?? null, draft, image, controller?.signal);
+            if (controller?.signal.aborted) return;
             setMaps(current => [...current.filter(x => x.id !== response.data.id), response.data]);
             reset();
             setNotice(response.data.indexStatus === "ready" ? "Map saved and searchable in campaign chat."
+                : response.data.indexStatus === "pending" ? "Map saved. Indexing is queued and will finish in the background."
                 : "Map saved. Indexing failed; retry indexing below.");
-        } catch (err) { setError(extractApiError(err, "Unable to save map. Reload the list before resubmitting if the connection failed.")); }
-        finally { setBusy(false); }
+        } catch (err) { if (!controller?.signal.aborted) setError(extractApiError(err, "Unable to save map. Reload the list before resubmitting if the connection failed.")); }
+        finally { if (!controller?.signal.aborted) setBusy(false); }
     }
     async function act(map: CampaignMap, remove: boolean) {
         if (busy || !canManage || (remove && !confirm(`Delete ${map.title} and its search index?`))) return;
         setBusy(true); setError(""); setNotice("");
+        const controller = scope.current;
         try {
             if (remove) {
-                await deleteMap(campaignId, map.id); setMaps(current => current.filter(x => x.id !== map.id));
+                await deleteMap(campaignId, map.id, controller?.signal);
+                if (controller?.signal.aborted) return;
+                setMaps(current => current.filter(x => x.id !== map.id));
                 if (editing?.id === map.id) reset(); setNotice("Map deleted.");
             } else {
-                const response = await indexMap(campaignId, map.id);
+                const response = await indexMap(campaignId, map.id, controller?.signal);
+                if (controller?.signal.aborted) return;
                 setMaps(current => current.map(x => x.id === map.id ? response.data : x));
-                setNotice(response.data.indexStatus === "ready" ? "Map is searchable." : "Indexing failed. Try again later.");
+                setNotice(response.data.indexStatus === "ready" ? "Map is searchable."
+                    : response.data.indexStatus === "pending" ? "Indexing queued. The status will update automatically."
+                    : "Indexing failed. Try again later.");
             }
-        } catch (err) { setError(extractApiError(err, "Unable to update map.")); }
-        finally { setBusy(false); }
+        } catch (err) { if (!controller?.signal.aborted) setError(extractApiError(err, "Unable to update map.")); }
+        finally { if (!controller?.signal.aborted) setBusy(false); }
     }
     return <main className="mx-auto max-w-6xl space-y-6 p-6">
         <Link to="/dashboard" className="inline-flex rounded-lg bg-stone-200 px-4 py-2 text-sm font-semibold text-stone-800 hover:bg-stone-300">Back to dashboard</Link>
@@ -117,11 +121,11 @@ export default function Maps() {
         {error && <p role="alert" className="rounded bg-red-100 p-3 text-red-900">{error}</p>}
         {notice && <p role="status" className="rounded bg-emerald-100 p-3">{notice}</p>}
         {loading ? <p>Loading maps…</p> : <>
-            <div role="tablist" aria-label="Map tools" className="flex gap-3">
+            {canManage && <div role="tablist" aria-label="Map tools" className="flex gap-3">
                 <Button type="button" role="tab" id="view-maps-tab" aria-controls="maps-panel" aria-selected={tab === "view"} variant={tab === "view" ? "primary" : "secondary"} disabled={busy} onClick={() => setTab("view")}>View maps</Button>
                 {canManage && <Button type="button" role="tab" id="manage-maps-tab" aria-controls="maps-panel" aria-selected={tab === "manage"} variant={tab === "manage" ? "primary" : "secondary"} disabled={busy} onClick={() => setTab("manage")}>Manage maps</Button>}
-            </div>
-            <section id="maps-panel" role="tabpanel" aria-labelledby={tab === "manage" && canManage ? "manage-maps-tab" : "view-maps-tab"} className="space-y-6">
+            </div>}
+            <section id="maps-panel" role={canManage ? "tabpanel" : undefined} aria-labelledby={canManage ? tab === "manage" ? "manage-maps-tab" : "view-maps-tab" : undefined} className="space-y-6">
             {canManage && tab === "manage" && !editorOpen && <section aria-label="Manage map list" className="space-y-3">
                 <h2 className="text-xl font-semibold">Maps <span className="text-sm font-normal text-stone-600">({maps.length})</span></h2>
                 <div className="max-h-[42.5rem] overflow-y-auto rounded-xl border border-stone-300 bg-amber-50 p-3" tabIndex={maps.length >= 6 ? 0 : undefined} aria-label="Map cards">
@@ -132,14 +136,14 @@ export default function Maps() {
                             </div>
                             <h3 className="shrink-0 truncate font-semibold" title={map.title}>{map.title}</h3>
                             <p className="min-h-0 flex-1 overflow-hidden text-sm text-stone-600">{map.description || "No description."}</p>
-                            <p className="shrink-0 text-xs text-stone-500">{map.locations.length} locations · {map.indexStatus === "ready" ? "Searchable" : "Not searchable yet"}</p>
+                            <p className="shrink-0 text-xs text-stone-500">{map.locations.length} locations · {map.indexStatus === "ready" ? "Searchable" : map.indexStatus === "pending" ? "Indexing…" : "Indexing failed"}</p>
                             <div className="mt-auto flex shrink-0 flex-wrap gap-2">
                                 <Button type="button" size="sm" disabled={busy} variant="secondary" onClick={() => {
                                     setEditing(map); setDraft({ title: map.title, description: map.description, locations: map.locations });
                                     setImage(null); setSelectedPin(null); setLocationBeforeEdit(null); setFormKey(x => x + 1);
                                     setEditorOpen(true); setError(""); setNotice("");
                                 }}>Edit</Button>
-                                <Button type="button" size="sm" disabled={busy} variant="secondary" onClick={() => void act(map, false)}>Retry indexing</Button>
+                                <Button type="button" size="sm" disabled={busy || map.indexStatus === "pending"} variant="secondary" onClick={() => void act(map, false)}>Retry indexing</Button>
                                 <Button type="button" size="sm" disabled={busy} variant="danger" onClick={() => void act(map, true)}>Delete</Button>
                             </div>
                         </li>)}

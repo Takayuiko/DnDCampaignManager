@@ -16,18 +16,18 @@ export type SessionNote = {
 };
 
 export type SessionNoteRequest = Pick<SessionNote, "sessionNumber" | "title" | "content" | "playedOn">;
-export const getSessionNotes = (campaignId: number) =>
-    api.get<SessionNote[]>(`/campaigns/${campaignId}/session-notes`);
-export const createSessionNote = (campaignId: number, request: SessionNoteRequest) =>
-    api.post<SessionNote>(`/campaigns/${campaignId}/session-notes`, request);
-export const indexSessionNote = (campaignId: number, noteId: number) =>
-    api.post<SessionNote>(`/campaigns/${campaignId}/session-notes/${noteId}/index`);
-export const deleteSessionNote = (campaignId: number, noteId: number) =>
-    api.delete(`/campaigns/${campaignId}/session-notes/${noteId}`);
+export const getSessionNotes = (campaignId: number, signal?: AbortSignal) =>
+    api.get<SessionNote[]>(`/campaigns/${campaignId}/session-notes`, { signal });
+export const createSessionNote = (campaignId: number, request: SessionNoteRequest, signal?: AbortSignal) =>
+    api.post<SessionNote>(`/campaigns/${campaignId}/session-notes`, request, { timeout: 180000, signal });
+export const indexSessionNote = (campaignId: number, noteId: number, signal?: AbortSignal) =>
+    api.post<SessionNote>(`/campaigns/${campaignId}/session-notes/${noteId}/index`, undefined, { timeout: 180000, signal });
+export const deleteSessionNote = (campaignId: number, noteId: number, signal?: AbortSignal) =>
+    api.delete(`/campaigns/${campaignId}/session-notes/${noteId}`, { signal });
 
-export const transcribeSessionAudio = (campaignId: number, audio: File) => {
+export const transcribeSessionAudio = (campaignId: number, audio: File, signal?: AbortSignal) => {
     const form = new FormData();
     form.append("audio", audio);
     return api.post<{ text: string; model: string }>(`/campaigns/${campaignId}/session-notes/audio/transcribe`, form,
-        { timeout: 660000 });
+        { timeout: 180000, signal });
 };

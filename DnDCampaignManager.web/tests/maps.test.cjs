@@ -24,12 +24,15 @@ test('map API sends typed locations in multipart requests and protects image req
     await exports.saveMap(12, null, draft, null);
     await exports.saveMap(12, 7, draft, null);
     await exports.getMapImage(12, 7);
+    await exports.getMapThumbnail(12, 7);
     assert.equal(calls[0][1], '/campaigns/12/maps');
     assert.equal(calls[1][0], 'put');
     assert.equal(calls[1][1], '/campaigns/12/maps/7');
     assert.deepEqual(JSON.parse(calls[0][2].get('locationsJson')), draft.locations);
     assert.equal(calls[2][1], '/campaigns/12/maps/7/image');
     assert.equal(calls[2][2].responseType, 'blob');
+    assert.equal(calls[3][1], '/campaigns/12/maps/7/thumbnail');
+    assert.equal(calls[3][2].responseType, 'blob');
 });
 function page(owner) {
     const states = []; let cursor = 0;
@@ -44,6 +47,7 @@ function page(owner) {
                 return [states[i], value => { states[i] = typeof value === 'function' ? value(states[i]) : value; }];
             } };
             if (name === '../components/UI/Button') return { default: 'button' };
+            if (name === '../components/Maps/MapImage') return { default: function MapImage() {} };
             if (name === 'react-router-dom') return { Link: 'a', useParams: () => ({ campaignId: '12' }) };
             if (name === '../auth/AuthContext') return { useAuth: () => ({ user: { id: owner ? 1 : 2, role: owner ? 'DM' : 'Player' } }) };
             if (name === '../api/campaignApi') return {};
@@ -87,7 +91,8 @@ test('players can view map locations without management controls', () => {
     p.states[1] = [{ id: 7, title: 'Tower', description: '', locations: [{ name: 'Gate', description: 'Locked', x: 20, y: 40 }], indexStatus: 'ready' }];
     const tree = nodes(p.render());
     assert.equal(tree.some(n => n.type === 'form'), false);
-    assert.equal(tree.some(n => n.type === 'button' && n.props.role !== 'tab'), false);
+    assert.equal(tree.some(n => n.type === 'button'), false);
+    assert.equal(tree.some(n => n.props.role === 'tablist' || n.props.role === 'tabpanel'), false);
     assert.equal(tree.some(n => n.type === 'strong' && n.props.children === 'Gate'), true);
 });
 

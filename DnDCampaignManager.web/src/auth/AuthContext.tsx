@@ -34,10 +34,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     useEffect(() => {
+        let generation = 0;
+        let active = true;
+        let controller: AbortController | null = null;
         const bootstrap = async () => {
+            const attempt = ++generation;
+            controller?.abort();
+            const request = new AbortController();
+            controller = request;
             const storedToken = localStorage.getItem("token");
 
             if (!storedToken) {
+                resetAuth();
                 setLoading(false);
                 return;
             }
@@ -45,17 +53,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             api.defaults.headers.common.Authorization = `Bearer ${storedToken}`;
 
             try {
-                const res = await getMe();
+                const res = await getMe(request.signal);
+                if (!active || attempt !== generation) return;
                 setUser(res.data);
-                setToken(storedToken);
+                setToken(localStorage.getItem("token"));
             } catch {
-                resetAuth();
+                if (active && attempt === generation && localStorage.getItem("token") === storedToken) resetAuth();
             } finally {
-                setLoading(false);
+                if (active && attempt === generation) setLoading(false);
             }
         };
 
         bootstrap();
+        const synchronize = (event: StorageEvent) => {
+            if (event.storageArea === localStorage && (event.key === "token" || event.key === null)) void bootstrap();
+        };
+        window.addEventListener("storage", synchronize);
+        return () => {
+            active = false;
+            generation++;
+            controller?.abort();
+            window.removeEventListener("storage", synchronize);
+        };
     }, []);
 
     const loginWithToken = async (newToken: string) => {
@@ -67,7 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
             const res = await getMe();
             setUser(res.data);
-            setToken(newToken);
+            setToken(localStorage.getItem("token"));
         } catch {
             resetAuth();
             throw new Error("Invalid token");
@@ -100,6 +119,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
 }
 
+// The provider and its consumer hook intentionally share this module.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
     const ctx = useContext(AuthContext);
     if (!ctx) {

@@ -1,3 +1,4 @@
+import { isAxiosError } from "axios";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getCharacter, updateCharacterByCampaign } from "../api/campaignApi";
@@ -91,21 +92,24 @@ export default function EditCharacter() {
 
     const [form, setForm] = useState<CharacterForm>(emptyForm);
     const [loading, setLoading] = useState(true);
+    const [reloadAttempt, setReloadAttempt] = useState(0);
+    const [conflict, setConflict] = useState(false);
     const [loaded, setLoaded] = useState(false);
 
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const topRight = useMemo(
-        () => (
-            <Button variant="subtle" type="button" onClick={() => navigate("/dashboard")}>
-                Back
-            </Button>
-        ),
-        [navigate]
-    );
+    const topRight = useMemo(() => <div className="flex gap-2">
+        {conflict && <Button type="button" variant="secondary" onClick={() => {
+            if (window.confirm("Reload the latest character? This will discard your unsaved edits."))
+                setReloadAttempt(current => current + 1);
+        }}>Reload latest character</Button>}
+        <Button variant="subtle" type="button" onClick={() => navigate("/dashboard")}>Back</Button>
+    </div>, [conflict, navigate]);
 
     useEffect(() => {
+        let active = true;
+        const controller = new AbortController();
         const load = async () => {
             if (!Number.isInteger(cid) || cid <= 0 || !Number.isInteger(chid) || chid <= 0) {
                 setError("Invalid campaign or character id.");
@@ -117,8 +121,9 @@ export default function EditCharacter() {
             setLoading(true);
             setLoaded(false);
             try {
-                const res = await getCharacter(cid, chid);
+                const res = await getCharacter(cid, chid, controller.signal);
 
+                if (!active) return;
                 const character = res.data;
 
                 setForm({
@@ -138,26 +143,31 @@ export default function EditCharacter() {
                         : [],
                 });
                 setLoaded(true);
+                setConflict(false);
             } catch (err: unknown) {
-                setError(extractApiError(err, "Unable to load character."));
+                if (active) setError(extractApiError(err, "Unable to load character."));
             } finally {
-                setLoading(false);
+                if (active) setLoading(false);
             }
         };
 
-        load();
-    }, [cid, chid, navigate]);
+        void load();
+        return () => { active = false; controller.abort(); };
+    }, [cid, chid, navigate, reloadAttempt]);
 
     const submit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!cid || !chid) return;
+        if (!cid || !chid || submitting || conflict) return;
 
         setError(null);
         setSubmitting(true);
         try {
-            await updateCharacterByCampaign(cid, chid, form);
+            const response = await updateCharacterByCampaign(cid, chid, form);
+            setForm(current => ({ ...current, version: response.data.version }));
             alert("Character stats updated")
         } catch (err: unknown) {
+            if (isAxiosError(err) && err.response?.status === 409 && err.response.data?.code === "character_version_conflict")
+                setConflict(true);
             setError(extractApiError(err, "Failed to save character."));
         } finally {
             setSubmitting(false);
@@ -185,6 +195,7 @@ export default function EditCharacter() {
             onSubmit={submit}
             submitLabel="Save Character"
             submitting={submitting}
+            saveDisabled={conflict}
             error={error}
         />
     );

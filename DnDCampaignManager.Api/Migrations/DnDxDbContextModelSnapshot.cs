@@ -180,6 +180,12 @@ namespace DnDCampaignManager.Api.Migrations
                     b.Property<string>("EmbeddingModel")
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("IndexLeaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("IndexLeaseUntil")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("IndexStatus")
                         .IsRequired()
                         .HasColumnType("text");
@@ -316,6 +322,15 @@ namespace DnDCampaignManager.Api.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("IndexLeaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("IndexLeaseUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("IndexRevision")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("IndexStatus")
                         .IsRequired()
                         .HasColumnType("text");
@@ -328,6 +343,9 @@ namespace DnDCampaignManager.Api.Migrations
                         .IsRequired()
                         .HasMaxLength(160)
                         .HasColumnType("character varying(160)");
+
+                    b.Property<byte[]>("Thumbnail")
+                        .HasColumnType("bytea");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -487,6 +505,10 @@ namespace DnDCampaignManager.Api.Migrations
                     b.Property<int>("UserId")
                         .HasColumnType("integer");
 
+                    b.Property<Guid>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
                     b.Property<int>("Wisdom")
                         .HasColumnType("integer");
 
@@ -591,14 +613,9 @@ namespace DnDCampaignManager.Api.Migrations
                     b.Property<int>("UserId")
                         .HasColumnType("integer");
 
-                    b.Property<int?>("UserId1")
-                        .HasColumnType("integer");
-
                     b.HasKey("Id");
 
                     b.HasIndex("CampaignId");
-
-                    b.HasIndex("UserId1");
 
                     b.HasIndex("UserId", "NormalizedName", "CampaignId")
                         .IsUnique();
@@ -762,17 +779,22 @@ namespace DnDCampaignManager.Api.Migrations
                     b.Property<bool>("IsRevoked")
                         .HasColumnType("boolean");
 
-                    b.Property<string>("ReplacedByToken")
-                        .HasColumnType("text");
+                    b.Property<string>("ReplacedByTokenHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
-                    b.Property<string>("Token")
+                    b.Property<string>("TokenHash")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<int>("UserId")
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
 
                     b.HasIndex("UserId");
 
@@ -794,6 +816,12 @@ namespace DnDCampaignManager.Api.Migrations
                     b.Property<bool>("IsAdmin")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("NormalizedEmail")
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("text")
+                        .HasComputedColumnSql("lower(btrim(\"Email\"))", true);
+
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("text");
@@ -808,6 +836,9 @@ namespace DnDCampaignManager.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("Email")
+                        .IsUnique();
+
+                    b.HasIndex("NormalizedEmail")
                         .IsUnique();
 
                     b.ToTable("Users", t =>
@@ -977,14 +1008,10 @@ namespace DnDCampaignManager.Api.Migrations
                         .IsRequired();
 
                     b.HasOne("DnDCampingManager.Api.Models.User", "User")
-                        .WithMany()
+                        .WithMany("CharacterClassOptions")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.HasOne("DnDCampingManager.Api.Models.User", null)
-                        .WithMany("CharacterClassOptions")
-                        .HasForeignKey("UserId1");
 
                     b.Navigation("Campaign");
 

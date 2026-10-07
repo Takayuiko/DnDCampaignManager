@@ -8,7 +8,7 @@ const errorExports = {};
 vm.runInNewContext(ts.transpileModule(
     fs.readFileSync(path.join(__dirname, '../src/Utils/apiError.ts'), 'utf8'),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }
-).outputText, { exports: errorExports, require });
+).outputText, { AbortController, DOMException, setTimeout, clearTimeout, exports: errorExports, require });
 
 const compiled = ts.transpileModule(
     fs.readFileSync(path.join(__dirname, '../src/pages/EditCampaign.tsx'), 'utf8'),
@@ -23,7 +23,7 @@ function harness(inviteError, status = 404) {
     const calls = [];
     const exportsObject = {};
     vm.runInNewContext(compiled, {
-        exports: exportsObject,
+        AbortController, DOMException, setTimeout, clearTimeout, exports: exportsObject,
         alert(message) { throw new Error(message); },
         require(name) {
             if (name === 'react') return {
@@ -96,6 +96,25 @@ test('unexpected server errors show a simple message instead of a stack trace', 
 test('error helper preserves validation errors and hides network errors and diagnostic text', () => {
     const error = (status, data) => ({ isAxiosError: true, response: { status, data } });
     assert.equal(errorExports.extractApiError(error(400, { errors: { Email: ['Enter a valid email.'] } }), 'Try again'), 'Enter a valid email.');
+    assert.equal(errorExports.extractApiError(error(400, { errors: { Password: ['Password must be between 12 and 128 characters.'] } }), 'Try again'),
+        'Password must be between 12 and 128 characters.');
+    assert.equal(errorExports.extractApiError(error(400, { message: 'Email already registered' }), 'Try again'), 'Email already registered');
+    assert.equal(errorExports.extractApiError(error(500, { message: 'System.Exception: internal failure' }), 'Try again'), 'Try again');
     assert.equal(errorExports.extractApiError(error(400, 'System.InvalidOperationException: internal failure'), 'Try again'), 'Try again');
     assert.equal(errorExports.extractApiError({ isAxiosError: true }, 'Try again'), 'Try again');
+});
+
+test('timeouts and cancellation use safe messages without exposing transport errors', () => {
+    assert.match(errorExports.extractApiError({ isAxiosError: true, code: 'ECONNABORTED', message: 'Internal URL' }, 'Fallback'),
+        /timed out.*check whether your changes were saved/);
+    assert.match(errorExports.extractApiError({ isAxiosError: true, code: 'ETIMEDOUT' }, 'Fallback'), /timed out/);
+    assert.equal(errorExports.extractApiError({ isAxiosError: true, code: 'ERR_CANCELED' }, 'Fallback'), 'Request cancelled.');
+});
+
+test('shared errors support conflict and problem details while suppressing server diagnostics', () => {
+    assert.equal(errorExports.extractApiResponseError(409, { error: 'This conversation is busy.' }, 'Failed'), 'This conversation is busy.');
+    assert.equal(errorExports.extractApiResponseError(422, { detail: 'Choose a valid skill.' }, 'Failed'), 'Choose a valid skill.');
+    assert.equal(errorExports.extractApiResponseError(500, { detail: 'Database unavailable' }, 'Failed'), 'Failed');
+    assert.equal(errorExports.extractErrorMessage({ error: 'System.Exception: secret' }, 'Failed'), 'Failed');
+    assert.equal(errorExports.extractLoginError({ isAxiosError: true, response: { status: 401, data: 'secret' } }), 'Invalid email or password.');
 });

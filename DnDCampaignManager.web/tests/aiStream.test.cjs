@@ -5,6 +5,12 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 
+const errorExports = {};
+vm.runInNewContext(ts.transpileModule(
+    fs.readFileSync(path.join(__dirname, '../src/Utils/apiError.ts'), 'utf8'),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }
+).outputText, { AbortController, DOMException, setTimeout, clearTimeout, exports: errorExports, require });
+
 const compiled = ts.transpileModule(
     fs.readFileSync(path.join(__dirname, '../src/api/aiApi.ts'), 'utf8'),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }
@@ -27,9 +33,9 @@ function client(streamText, chunkSize = 7, cancel = () => {}, keepOpen = false) 
         }
     });
     vm.runInNewContext(compiled, {
-        exports: exportsObject, TextDecoder,
+        AbortController, DOMException, setTimeout, clearTimeout, exports: exportsObject, TextDecoder,
         localStorage: { getItem: () => 'test-token' },
-        require: () => ({ default: { defaults: { baseURL: '/api' } } }),
+        require: name => name === '../Utils/apiError' ? errorExports : name === '../Utils/requestCancellation' ? require('./helpers/requestCancellation.cjs') : ({ default: { defaults: { baseURL: '/api' } } }),
         fetch: async () => ({ ok: true, status: 200, body })
     });
     return exportsObject;
@@ -89,7 +95,7 @@ test('chat re-enables its input and Send for two consecutive replies', async () 
     ).outputText;
     const initialConversation = { id: 'conversation', title: 'Chat', messages: [] };
     vm.runInNewContext(chatCompiled, {
-        exports: chatExports,
+        AbortController, DOMException, setTimeout, clearTimeout, exports: chatExports,
         require(name) {
             if (name === 'react') return {
                 useState(initial) {
@@ -97,7 +103,11 @@ test('chat re-enables its input and Send for two consecutive replies', async () 
                     if (!(index in states)) states[index] = index === 1 ? initialConversation : index === 5 ? false : initial;
                     return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }];
                 },
-                useMemo: factory => factory(), useRef: initial => ({ current: initial }), useEffect() {}
+                useMemo: factory => factory(), useRef(initial) {
+                    const index = cursor++;
+                    if (!(index in states)) states[index] = { current: initial };
+                    return states[index];
+                }, useEffect() {}
             };
             if (name === '../api/aiApi') return {
                 async streamAIMessage(...args) {

@@ -3,10 +3,63 @@ name: Build and deploy - DnDCampaignManager
 on:
   push:
     branches: [ master ]
+  pull_request:
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: dndcampaignmanager_ci
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d dndcampaignmanager_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ConnectionStrings__DefaultConnection: Host=localhost;Port=5432;Database=dndcampaignmanager_ci;Username=ci;Password=ci-only-password
+      OpenAI__ApiKey: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: DnDCampaignManager.web/package-lock.json
+      - name: Configure temporary JWT signing key
+        shell: pwsh
+        run: |
+          "Jwt__SigningKeys__0__Kid=ci" >> $env:GITHUB_ENV
+          "Jwt__SigningKeys__0__Key=$([Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(64)))" >> $env:GITHUB_ENV
+      - name: Install frontend dependencies
+        working-directory: DnDCampaignManager.web
+        run: npm ci
+      - name: Frontend regression tests
+        working-directory: DnDCampaignManager.web
+        run: npm test
+      - name: Frontend lint
+        working-directory: DnDCampaignManager.web
+        run: npm run lint
+      - name: Backend regression checks
+        shell: pwsh
+        run: ./scripts/Run-RegressionChecks.ps1
+
   build:
+    needs: regression
     runs-on: windows-latest
     permissions:
       contents: read
@@ -65,6 +118,7 @@ jobs:
           path: ./publish
 
   deploy:
+    if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: windows-latest
     needs: build
     permissions:

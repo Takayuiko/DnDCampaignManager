@@ -5,6 +5,7 @@ namespace DnDCampaignManager.Api.DTOs
     public class CharacterResponseDto
     {
         public int Id { get; set; }
+        public Guid Version { get; set; }
         public int UserId { get; set; }
 
         public string Name { get; set; } = null!;
@@ -57,3 +58,4 @@ namespace DnDCampaignManager.Api.DTOs
         public int Level { get; set; }
     }
 }
+namespace DnDCampaignManager.Api.DTOs { public sealed record CharacterSaveResponseDto(Guid Version); }

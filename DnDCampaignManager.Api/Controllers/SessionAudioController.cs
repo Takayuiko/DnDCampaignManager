@@ -27,6 +27,8 @@ public sealed class SessionAudioController(CampaignKnowledgeService knowledge, I
         var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         // Check both role and campaign ownership before any paid provider call.
         if (!User.IsInRole("DM") || !await knowledge.CanManageAsync(campaignId, userId, ct)) return NotFound();
+        if (!transcription.IsAvailable)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, AIServiceRegistration.UnavailableMessage);
         if (audio is null || audio.Length == 0) return BadRequest("Select a nonempty audio recording.");
         if (audio.Length > MaxAudioBytes) return BadRequest("Audio must be 25 MB or smaller. Compress it or upload separate parts.");
         var extension = Path.GetExtension(audio.FileName);
@@ -43,6 +45,11 @@ public sealed class SessionAudioController(CampaignKnowledgeService knowledge, I
             return Ok(new SessionTranscriptDto(text, transcription.Model));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (AIBusyException ex)
+        {
+            Response.Headers.RetryAfter = "5";
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ex.Message);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Session audio transcription failed for campaign {CampaignId}.", campaignId);

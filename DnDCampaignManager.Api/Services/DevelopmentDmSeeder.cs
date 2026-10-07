@@ -27,7 +27,7 @@ public static class DevelopmentDmSeeder
         await db.Database.MigrateAsync();
 
         var normalizedEmail = email.ToLowerInvariant();
-        var matches = await db.Users.Where(u => u.Email.ToLower() == normalizedEmail).Take(2).ToListAsync();
+        var matches = await db.Users.Where(u => u.NormalizedEmail == normalizedEmail).Take(2).ToListAsync();
         if (matches.Count > 1)
             throw new InvalidOperationException("Multiple accounts match the email; no account changes were made.");
 

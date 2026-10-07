@@ -4,6 +4,7 @@ public sealed record EmbeddingBatch(IReadOnlyList<float[]> Vectors, int InputTok
 
 public interface IEmbeddingService
 {
+    bool IsAvailable => true;
     string Model { get; }
     int Dimensions { get; }
     Task<EmbeddingBatch> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken cancellationToken);

@@ -4,6 +4,14 @@ namespace DnDCampaignManager.Api.Services
 {
     public static class SkillDefaults
     {
+        public static List<CharacterSkill> CompleteSkills(IEnumerable<CharacterSkill> skills, int characterId)
+        {
+            var result = skills.ToList();
+            var existing = result.Select(s => s.Skill).ToHashSet();
+            result.AddRange(CreateDefaultSkills(characterId).Where(s => !existing.Contains(s.Skill)));
+            return result;
+        }
+
         public static List<CharacterSkill> CreateDefaultSkills(int characterId)
         {
             return new List<CharacterSkill>

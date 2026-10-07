@@ -29,7 +29,7 @@ public sealed class DungeonMasterManagementService(DnDxDbContext db)
     {
         await RequireAdmin(actorId, ct);
         var normalized = email.Trim().ToLowerInvariant();
-        var ids = await db.Users.Where(u => u.Email.ToLower() == normalized).Select(u => u.Id).Take(2).ToListAsync(ct);
+        var ids = await db.Users.Where(u => u.NormalizedEmail == normalized).Select(u => u.Id).Take(2).ToListAsync(ct);
         if (ids.Count == 0) throw new DmManagementException(404, "No registered user has that email.");
         if (ids.Count != 1) throw new DmManagementException(409, "Multiple accounts match this email.");
         await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;

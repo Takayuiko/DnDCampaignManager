@@ -1,3 +1,4 @@
+using DnDCampaignManager.Api.Services;
 ﻿using DnDCampaignManager.Api.DTOs;
 using DnDCampaignManager.Api.Models;
 using DnDCampingManager.Api.Data;
@@ -66,10 +67,8 @@ namespace DnDCampaignManager.Api.Controllers
         {
             var userId = GetUserId();
 
-            var partCamp = await _dnDxDbContext.CampaignPlayer.Where(x => x.UserId == userId).ToListAsync();
-
             var campaigns = await _dnDxDbContext.Campaigns
-                .Where(c => c.OwnerId == userId || c.Players.Any(p => p.UserId == userId))
+                .AccessibleTo(userId)
                 .Include(c => c.Players).ThenInclude(p => p.User)
                 .Include(c => c.Characters)
                 .Select(c => new CampaignResponseDto(
@@ -212,7 +211,7 @@ namespace DnDCampaignManager.Api.Controllers
 
             var normalizedEmail = dto.Email.Trim().ToLowerInvariant();
             var matches = await _dnDxDbContext.Users
-                .Where(u => u.Email.ToLower() == normalizedEmail)
+                .Where(u => u.NormalizedEmail == normalizedEmail)
                 .Take(2)
                 .ToListAsync();
 
@@ -290,7 +289,8 @@ namespace DnDCampaignManager.Api.Controllers
             }
             else
             {
-                if (character.UserId != userId) return Forbid();
+                if (character.UserId != userId || !await _dnDxDbContext.CampaignPlayer
+                    .AnyAsync(p => p.CampaignId == campaignId && p.UserId == userId)) return Forbid();
             }
 
             _dnDxDbContext.Characters.Remove(character);

@@ -11,9 +11,13 @@ public sealed class CampaignMap
     public string NormalizedTitle { get; set; } = "";
     public string Description { get; set; } = "";
     public byte[] Image { get; set; } = [];
+    public byte[]? Thumbnail { get; set; }
     public string ImageContentType { get; set; } = "";
     public string LocationsJson { get; set; } = "[]";
     public string IndexStatus { get; set; } = "pending";
+    public Guid IndexRevision { get; set; } = Guid.NewGuid();
+    public Guid? IndexLeaseId { get; set; }
+    public DateTime? IndexLeaseUntil { get; set; }
     public string? EmbeddingModel { get; set; }
     public int EmbeddingDimensions { get; set; }
     public ICollection<MapKnowledgeChunk> Chunks { get; set; } = new List<MapKnowledgeChunk>();

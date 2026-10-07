@@ -13,10 +13,11 @@ export default function DungeonMasters() {
 
     useEffect(() => {
         let active = true;
-        void getDungeonMasters().then(response => { if (active) setDms(response.data); })
+        const controller = new AbortController();
+        void getDungeonMasters(controller.signal).then(response => { if (active) setDms(response.data); })
             .catch(() => { if (active) setError("Unable to load Dungeon Masters. Reload to retry."); })
             .finally(() => { if (active) setLoading(false); });
-        return () => { active = false; };
+        return () => { active = false; controller.abort(); };
     }, []);
 
     async function promote(event: FormEvent) {
