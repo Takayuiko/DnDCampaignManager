@@ -10,6 +10,7 @@ export type ConversationSummary = {
 };
 
 export type KnowledgeSource = {
+    mapId?: number | null;
     label: string;
     sessionNoteId: number;
     sessionNumber: number;

@@ -47,6 +47,7 @@ export default function CampaignItem({ campaign, isDM, onEdit, onDelete, onAddCh
                 </header>
 
                 <nav aria-label={`${campaign.name} tools`} className="flex flex-wrap gap-3">
+                    <Button type="button" variant="secondary" onClick={() => navigate(`/campaigns/${campaign.id}/maps`)}>Maps</Button>
                     <Button type="button" variant="secondary" onClick={() => navigate(`/campaigns/${campaign.id}/session-notes`)}>Session Notes</Button>
                     <Button type="button" variant="secondary" onClick={() => navigate(`/campaigns/${campaign.id}/items`)}>Items</Button>
                 </nav>

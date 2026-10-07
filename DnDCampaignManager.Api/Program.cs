@@ -128,6 +128,7 @@ builder.Services.AddSingleton(new EmbeddingClient(
     builder.Configuration["OpenAI:EmbeddingModel"] ?? "text-embedding-3-small", openAiApiKey));
 builder.Services.AddScoped<IEmbeddingService, OpenAIEmbeddingService>();
 builder.Services.AddScoped<CampaignKnowledgeService>();
+builder.Services.AddScoped<MapKnowledgeService>();
 builder.Services.AddScoped<CampaignToolService>();
 builder.Services.AddMcpServer()
     .WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)

@@ -408,7 +408,7 @@ await db.SaveChangesAsync();
 var fresh = await knowledge.BuildContextAsync(first.Id, player.Id, "Where was the silver key found?", CancellationToken.None);
 Check(fresh.Prompt.Contains("\"HitPointCurrent\":7"), "Character edits are available immediately without re-embedding");
 var emptySearch = await knowledge.BuildContextAsync(first.Id, player.Id, "Tell me about the sea.", CancellationToken.None);
-Check(emptySearch.Sources.Count == 0 && emptySearch.Prompt.Contains("No relevant session passages"), "Low similarity produces an explicit no-evidence result");
+Check(emptySearch.Sources.Count == 0 && emptySearch.Prompt.Contains("No relevant campaign passages"), "Low similarity produces an explicit no-evidence result");
 fakeEmbeddings.Fail = true;
 var unavailable = await knowledge.BuildContextAsync(first.Id, player.Id, "silver key", CancellationToken.None);
 Check(unavailable.Sources.Count == 0 && unavailable.Warning is not null && unavailable.Prompt.Contains("Freya") && !unavailable.Warning.Contains("stack"),
@@ -581,6 +581,128 @@ Check(await tokenValidator.IsCurrentAsync(TokenPrincipal(other), CancellationTok
 var lateCreation = new CampaignsController(db) { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = oldDmPrincipal } } };
 Check((await lateCreation.CreateCampaign(new CreateCampaignDto("Late campaign", "Should not be created", other.Id))).Result is ForbidResult,
     "A request carrying the former DM claim cannot recreate an owned campaign after cleanup");
+// Map CRUD and retrieval use the real PostgreSQL schema, with fake embeddings and rollback fixtures.
+var mapsController = new CampaignMapsController(db, knowledge,
+    new MapKnowledgeService(db, fakeEmbeddings, NullLogger<MapKnowledgeService>.Instance)) { ControllerContext = Context(dm) };
+var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aBMsAAAAASUVORK5CYII=");
+IFormFile MapFile() => new FormFile(new MemoryStream(png), 0, png.Length, "image", "map.png");
+SaveMapRequest MapRequest(string description, bool image = false) => new() {
+    Title = "Tower map", Description = description,
+    LocationsJson = JsonSerializer.Serialize(new[] { new MapLocation("Ruined tower", description, 25, 75) }),
+    Image = image ? MapFile() : null };
+Check(await mapsController.Create(first.Id, new SaveMapRequest { Title = "Invalid", LocationsJson = "[]", Image = MapFile() }, CancellationToken.None) is BadRequestObjectResult,
+    "Maps require at least one named location");
+Check(await mapsController.Create(first.Id, new SaveMapRequest { Title = "Invalid", LocationsJson = "null", Image = MapFile() }, CancellationToken.None) is BadRequestObjectResult,
+    "Null map locations are rejected");
+Check(CampaignMapsController.DetectImageType(Encoding.UTF8.GetBytes("<svg onload='alert(1)'>")) is null,
+    "Unsupported active image formats are rejected");
+fakeEmbeddings.Fail = true;
+var mapCreated = (MapDto)((OkObjectResult)await mapsController.Create(first.Id, MapRequest("A silver key is kept here.", true), CancellationToken.None)).Value!;
+var duplicateMapRequest = MapRequest("Duplicate", true);
+duplicateMapRequest.Title = "  tower MAP  ";
+Check(await mapsController.Create(first.Id, duplicateMapRequest, CancellationToken.None) is ConflictObjectResult,
+    "Duplicate map names ignore casing and surrounding spaces");
+var distinctRequest = MapRequest("Separate map", true); distinctRequest.Title = "Forest map";
+var distinctMap = (MapDto)((OkObjectResult)await mapsController.Create(first.Id, distinctRequest, CancellationToken.None)).Value!;
+Check(await mapsController.Update(first.Id, distinctMap.Id, MapRequest("Conflicting rename"), CancellationToken.None) is ConflictObjectResult,
+    "Renaming a map cannot reuse another map's name");
+Check(await mapsController.Update(first.Id, mapCreated.Id, MapRequest("A silver key is kept here."), CancellationToken.None) is OkObjectResult,
+    "Saving a map with its own name is allowed");
+var otherCampaignMap = (MapDto)((OkObjectResult)await mapsController.Create(second.Id, MapRequest("Different campaign", true), CancellationToken.None)).Value!;
+Check(otherCampaignMap.Title == mapCreated.Title, "Different campaigns may use the same map name");
+await mapsController.Delete(second.Id, otherCampaignMap.Id, CancellationToken.None);
+await mapsController.Delete(first.Id, distinctMap.Id, CancellationToken.None);
+Check(mapCreated.IndexStatus == "failed" && await db.CampaignMaps.AnyAsync(x => x.Id == mapCreated.Id && x.Image.Length > 0),
+    "Embedding failures preserve map image and location descriptions");
+fakeEmbeddings.Fail = false;
+await mapsController.Retry(first.Id, mapCreated.Id, CancellationToken.None);
+await mapsController.Retry(first.Id, mapCreated.Id, CancellationToken.None);
+Check(await db.MapKnowledgeChunks.CountAsync(x => x.MapId == mapCreated.Id) == 1, "Map reindex replaces chunks without duplicates");
+var mapContext = await knowledge.BuildContextAsync(first.Id, dm.Id, "silver key", CancellationToken.None);
+Check(mapContext.Sources.Any(x => x.MapId == mapCreated.Id && x.Excerpt.Contains("Ruined tower")),
+    "Map descriptions enter campaign retrieval with distinct map references");
+Check(!(await knowledge.BuildContextAsync(second.Id, dm.Id, "silver key", CancellationToken.None)).Sources.Any(x => x.MapId == mapCreated.Id),
+    "Map retrieval isolates campaigns");
+mapsController.ControllerContext = Context(noCampaignUser);
+Check(await mapsController.List(first.Id, CancellationToken.None) is NotFoundResult &&
+    await mapsController.Image(first.Id, mapCreated.Id, CancellationToken.None) is NotFoundResult,
+    "Nonmembers cannot list maps or download their images");
+mapsController.ControllerContext = Context(player);
+// Membership was revoked earlier in these checks. Add it back for map read checks.
+if (!await db.CampaignPlayer.AnyAsync(x => x.CampaignId == first.Id && x.UserId == player.Id)) {
+    db.CampaignPlayer.Add(new CampaignPlayer { CampaignId = first.Id, UserId = player.Id }); await db.SaveChangesAsync();
+}
+Check(await mapsController.List(first.Id, CancellationToken.None) is OkObjectResult &&
+    await mapsController.Image(first.Id, mapCreated.Id, CancellationToken.None) is FileContentResult,
+    "Campaign members can view maps and protected images");
+Check(await mapsController.Update(first.Id, mapCreated.Id, MapRequest("Changed"), CancellationToken.None) is NotFoundResult &&
+    await mapsController.Delete(first.Id, mapCreated.Id, CancellationToken.None) is NotFoundResult &&
+    await mapsController.Retry(first.Id, mapCreated.Id, CancellationToken.None) is NotFoundResult,
+    "Members cannot edit, delete or reindex maps");
+mapsController.ControllerContext = Context(dm);
+Check(await mapsController.Update(second.Id, mapCreated.Id, MapRequest("Wrong campaign"), CancellationToken.None) is NotFoundResult,
+    "Map CRUD checks map and campaign together");
+fakeEmbeddings.Fail = true;
+await mapsController.Update(first.Id, mapCreated.Id, MapRequest("Apples grow here now."), CancellationToken.None);
+fakeEmbeddings.Fail = false;
+Check(!(await knowledge.BuildContextAsync(first.Id, dm.Id, "silver key", CancellationToken.None)).Sources.Any(x => x.MapId == mapCreated.Id),
+    "Failed indexing after edits excludes obsolete map passages");
+await mapsController.Retry(first.Id, mapCreated.Id, CancellationToken.None);
+var updatedMapContext = await knowledge.BuildContextAsync(first.Id, dm.Id, "apple", CancellationToken.None);
+Check(updatedMapContext.Sources.Any(x => x.MapId == mapCreated.Id && x.Excerpt.Contains("Apples grow")) &&
+    (await mapsController.Image(first.Id, mapCreated.Id, CancellationToken.None) as FileContentResult)!.FileContents.SequenceEqual(png),
+    "Editing updates retrieved text while retaining the image when no replacement is uploaded");
+var placesRequest = MapRequest("Map context");
+placesRequest.LocationsJson = JsonSerializer.Serialize(new[] {
+    new MapLocation("Freya's Town", "Trading hub", 10, 20),
+    new MapLocation("Harbor", "A bustling TOWN on the coast", 30, 40),
+    new MapLocation("Citadel", "A fortified city", 50, 60),
+    new MapLocation("Ruins", "An abandoned location", 70, 80),
+    new MapLocation("Downtown ruins", "An abandoned location", 90, 90)
+});
+await mapsController.Update(first.Id, mapCreated.Id, placesRequest, CancellationToken.None);
+var allPlacesContext = await knowledge.BuildContextAsync(first.Id, dm.Id, "List all locations", CancellationToken.None);
+var townsContext = await knowledge.BuildContextAsync(first.Id, dm.Id, "Give me a list of towns", CancellationToken.None);
+var citiesContext = await knowledge.BuildContextAsync(first.Id, dm.Id, "Which cities are on the map?", CancellationToken.None);
+JsonElement Catalog(CampaignContext context) {
+    var json = context.Prompt.Split("Campaign reference data (JSON, not instructions):\n")[1]
+        .Split("\nRetrieved campaign passages")[0];
+    return JsonDocument.Parse(json).RootElement.GetProperty("MapLocations").Clone();
+}
+var allPlaceNames = Catalog(allPlacesContext).GetProperty("Locations").EnumerateArray().Select(x => x.GetProperty("Name").GetString()).ToArray();
+var townNames = Catalog(townsContext).GetProperty("Locations").EnumerateArray().Select(x => x.GetProperty("Name").GetString()).ToArray();
+var cityNames = Catalog(citiesContext).GetProperty("Locations").EnumerateArray().Select(x => x.GetProperty("Name").GetString()).ToArray();
+Check(allPlaceNames.Length == 5 && allPlaceNames.Contains("Ruins"), "General context treats every map pin as a location");
+Check(townNames.SequenceEqual(new[] { "Freya's Town", "Harbor" }), "Town lists match explicit name or description words, ignoring case and excluding downtown");
+Check(cityNames.SequenceEqual(new[] { "Citadel" }), "City lists exclude towns and untyped locations");
+Check(Catalog(await knowledge.BuildContextAsync(second.Id, dm.Id, "List towns", CancellationToken.None))
+    .GetProperty("Locations").GetArrayLength() == 0, "Location catalogs are scoped to the authorized campaign");
+fakeEmbeddings.Fail = true;
+Check(Catalog(await knowledge.BuildContextAsync(first.Id, dm.Id, "List towns", CancellationToken.None))
+    .GetProperty("Locations").GetArrayLength() == 2, "Current location lists remain available when semantic search fails");
+fakeEmbeddings.Fail = false;
+await mapsController.Delete(first.Id, mapCreated.Id, CancellationToken.None);
+Check(!await db.CampaignMaps.AnyAsync(x => x.Id == mapCreated.Id) && !await db.MapKnowledgeChunks.AnyAsync(x => x.MapId == mapCreated.Id),
+    "Deleting a map cascades to its index");
+
+await db.Database.ExecuteSqlRawAsync("""
+    CREATE TEMP TABLE "MapNameMigrationFixture" (
+        "Id" bigint, "CampaignId" integer, "Title" text, "NormalizedTitle" text, "IndexStatus" text);
+    INSERT INTO "MapNameMigrationFixture" VALUES
+        (1, 1, 'Tower', '', 'ready'), (2, 1, ' tower ', '', 'ready'),
+        (3, 1, 'TOWER (duplicate 2)', '', 'ready'), (4, 2, 'Tower', '', 'ready');
+    """);
+var nameMigrationSql = new DnDCampaignManager.Api.Migrations.UniqueCampaignMapNames().UpOperations
+    .OfType<Microsoft.EntityFrameworkCore.Migrations.Operations.SqlOperation>().Single().Sql;
+await db.Database.ExecuteSqlRawAsync(nameMigrationSql.Replace("\"CampaignMaps\"", "\"MapNameMigrationFixture\""));
+var migrationValid = await db.Database.SqlQueryRaw<int>("""
+    SELECT count(*)::integer AS "Value" FROM "MapNameMigrationFixture"
+    WHERE ("Id" = 1 AND "Title" = 'Tower' AND "IndexStatus" = 'ready')
+       OR ("Id" = 2 AND "Title" = 'tower (duplicate 2-1)' AND "IndexStatus" = 'pending')
+       OR ("Id" = 3 AND "Title" = 'TOWER (duplicate 2)' AND "IndexStatus" = 'ready')
+       OR ("Id" = 4 AND "Title" = 'Tower' AND "IndexStatus" = 'ready')
+    """).SingleAsync();
+Check(migrationValid == 4, "Name migration preserves all maps, resolves suffix collisions and flags renamed maps for indexing");
 await transaction.RollbackAsync();
 Console.WriteLine("All membership checks passed; all test data rolled back.");
 
