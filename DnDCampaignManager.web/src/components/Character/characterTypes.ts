@@ -44,9 +44,10 @@ export type CharacterOptionsPayload = {
     backgrounds: CharacterOption[];
 };
 
-export type GetCharacterResponse = Omit<CharacterForm, "campaignId" | "attacks"> & {
+export type GetCharacterResponse = Omit<CharacterForm, "campaignId" | "attacks" | "version"> & {
     id: number;
     userId: number;
+    version: string;
     proficiencyBonus: number;
     attacks: Omit<Attack, "clientId">[];
 };
@@ -71,6 +72,7 @@ export type Attack = {
 };
 
 export type CharacterForm = {
+    version?: string;
     campaignId: number;
     // Identity
     name: string;

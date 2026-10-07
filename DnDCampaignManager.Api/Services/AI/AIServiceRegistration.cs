@@ -11,6 +11,7 @@ public static class AIServiceRegistration
 
     public static IServiceCollection AddCampaignAI(this IServiceCollection services, IConfiguration configuration)
     {
+        services.AddSingleton<AIConcurrencyLimiter>();
         var key = configuration["OpenAI:ApiKey"];
         if (!string.IsNullOrWhiteSpace(key))
         {

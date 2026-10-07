@@ -105,6 +105,24 @@ try {
         Check(await Controller(nextDb, new ControlledAI()).DeleteConversation(conversation.Id, timeout.Token) is OkObjectResult,
             "Deadline releases the conversation lock for the next operation");
     }
+    foreach (var stream in new[] { false, true }) {
+        await using var busyDb = Database();
+        var busyController = Controller(busyDb, new ControlledAI { Busy = true });
+        using var busyBody = new MemoryStream(); busyController.Response.Body = busyBody;
+        if (stream) {
+            await busyController.StreamMessage(conversation.Id, new("Busy test"), timeout.Token);
+            var body = Encoding.UTF8.GetString(busyBody.ToArray());
+            Check(body.Contains("capacity is busy") && !body.Contains("event: done"),
+                "Overloaded streams return a readable busy error without successful completion");
+        }
+        else Check((await busyController.SendMessage(conversation.Id, new("Busy test"), timeout.Token)).Result is ObjectResult { StatusCode: 503 } &&
+            busyController.Response.Headers.RetryAfter == "5", "Chat overload returns HTTP 503 with retry guidance");
+        Check(!await busyDb.AIMessages.AnyAsync(m => m.ConversationId == conversation.Id && m.Role == "assistant"),
+            "Overload never persists a successful assistant reply");
+        await using var nextDb = Database();
+        Check(await Controller(nextDb, new ControlledAI()).DeleteConversation(conversation.Id, timeout.Token) is OkObjectResult,
+            "Overload releases the conversation lock");
+    }
 } finally {
     provider.Release.TrySetResult();
     if (active != null) try { await active; } catch { }
@@ -115,7 +133,7 @@ try {
 Console.WriteLine("Conversation concurrency checks passed; fixtures removed.");
 sealed class ControlledAI : IAIService {
     public string Model => "test";
-    public bool Pause, Fail, TransactionObserved;
+    public bool Pause, Fail, Busy, TransactionObserved;
     public int Calls;
     public Func<bool>? HasTransaction;
     public TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -125,6 +143,7 @@ sealed class ControlledAI : IAIService {
         Calls++; TransactionObserved = HasTransaction?.Invoke() ?? false; Started.TrySetResult();
         if (Pause) await Release.Task.WaitAsync(cancellationToken);
         if (Fail) throw new InvalidOperationException("Test failure");
+        if (Busy) throw new AIBusyException();
         return new("Hello", "test", null, new(1,1,2,0), 1);
     }
     public async IAsyncEnumerable<AIStreamEvent> StreamChatResponseAsync(IReadOnlyCollection<AIMessage> history,

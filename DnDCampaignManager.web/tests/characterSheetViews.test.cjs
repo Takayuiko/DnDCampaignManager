@@ -183,3 +183,27 @@ test('unfinished attack drafts survive view switches and block character saving 
     assert.equal(h.getForm().attacks.length,1);
     assert.equal(nodes(h.render()).find(n=>n.type==='button' && n.props.type==='submit').props.disabled,false);
 });
+
+test('attack limits block invalid drafts and a full collection still permits modification', () => {
+    const h = harness();
+    const button = text => nodes(h.render()).find(n => n.type === 'button' && n.props.children === text);
+    button('New attack').props.onClick();
+    nodes(h.render()).find(n => n.props.placeholder === 'Longsword').props.onChange({ target: { value: 'Sword' } });
+    const bonus = () => nodes(nodes(h.render()).find(n => n.props['aria-label'] === 'Attack editor')).find(n => n.type === 'input' && n.props.min === -1000 && n.props.max === 1000);
+    for (const invalid of ['1001', '-1001', '1.5']) {
+        bonus().props.onChange({ target: { value: invalid } });
+        assert.equal(button('Add attack').props.disabled, true);
+        button('Add attack').props.onClick();
+        assert.equal(h.getForm().attacks.length, 0);
+    }
+    bonus().props.onChange({ target: { value: '-1000' } });
+    button('Add attack').props.onClick();
+    assert.equal(h.getForm().attacks[0].attackBonus, -1000);
+    h.getForm().attacks = Array.from({ length: 50 }, (_, index) => ({ clientId: String(index), name: `Attack ${index}`, attackBonus: 0, damage: '' }));
+    assert.equal(button('New attack').props.disabled, true);
+    button('Modify').props.onClick();
+    nodes(h.render()).find(n => n.props.placeholder === 'Longsword').props.onChange({ target: { value: 'Modified' } });
+    button('Save attack changes').props.onClick();
+    assert.equal(h.getForm().attacks.length, 50);
+    assert.equal(h.getForm().attacks[0].name, 'Modified');
+});

@@ -11,7 +11,9 @@ type Props = CharacterSectionProps & {
 
 export default function AttacksSection({ form, setForm, draft, setDraft, submitting }: Props) {
     function confirmDraft() {
-        if (!draft || !draft.name.trim() || !Number.isFinite(draft.attackBonus) || submitting) return;
+        if (!draft || !draft.name.trim() || draft.name.length > 120 || draft.damage.length > 500 ||
+            !Number.isInteger(draft.attackBonus) || Math.abs(draft.attackBonus) > 1000 || submitting ||
+            (!draft.clientId && form.attacks.length >= 50)) return;
         const attack = { ...draft, name: draft.name.trim(), damage: draft.damage.trim(), clientId: draft.clientId ?? crypto.randomUUID() };
         setForm(previous => ({ ...previous, attacks: draft.clientId
             ? previous.attacks.map(current => current.clientId === draft.clientId ? attack : current)
@@ -22,30 +24,31 @@ export default function AttacksSection({ form, setForm, draft, setDraft, submitt
     return <section className={sectionClass}>
         <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-stone-700">Attacks & Spellcasting</h2>
-            <button type="button" disabled={!!draft || submitting}
+            <button type="button" disabled={!!draft || submitting || form.attacks.length >= 50}
                 onClick={() => setDraft({ id: null, name: "", attackBonus: 0, damage: "" })}
                 className="px-3 py-1.5 rounded-md bg-stone-900 text-amber-50 text-sm font-semibold hover:bg-stone-800 disabled:opacity-50">
                 New attack
             </button>
+            {form.attacks.length >= 50 && <p className="text-xs text-stone-600">Maximum of 50 attacks reached.</p>}
         </div>
 
         {draft && <div className="mb-4 space-y-3 rounded-lg border border-stone-300 bg-amber-50 p-3" aria-label="Attack editor">
             <h3 className="font-semibold text-stone-800">{draft.clientId ? "Modify attack" : "New attack"}</h3>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <label className="block text-xs font-semibold text-stone-600">Name
-                    <input value={draft.name} disabled={submitting} onChange={event => {
+                    <input maxLength={120} value={draft.name} disabled={submitting} onChange={event => {
                         const name = event.target.value;
                         setDraft(previous => previous ? { ...previous, name } : previous);
                     }} className="mt-1 w-full border border-stone-300 rounded-md p-2" placeholder="Longsword" />
                 </label>
                 <label className="block text-xs font-semibold text-stone-600">Atk Bonus
-                    <input type="number" value={draft.attackBonus} disabled={submitting} onChange={event => {
+                    <input type="number" min={-1000} max={1000} value={draft.attackBonus} disabled={submitting} onChange={event => {
                         const attackBonus = Number(event.target.value);
                         setDraft(previous => previous ? { ...previous, attackBonus } : previous);
                     }} className="mt-1 w-full border border-stone-300 rounded-md p-2" />
                 </label>
                 <label className="block text-xs font-semibold text-stone-600">Damage/Type
-                    <input value={draft.damage} disabled={submitting} onChange={event => {
+                    <input maxLength={500} value={draft.damage} disabled={submitting} onChange={event => {
                         const damage = event.target.value;
                         setDraft(previous => previous ? { ...previous, damage } : previous);
                     }} className="mt-1 w-full border border-stone-300 rounded-md p-2" placeholder="1d8+3 slashing" />
@@ -54,7 +57,7 @@ export default function AttacksSection({ form, setForm, draft, setDraft, submitt
             <div className="flex justify-end gap-2">
                 <button type="button" onClick={() => setDraft(null)} disabled={submitting}
                     className="px-3 py-2 text-sm rounded-md border border-stone-300 bg-white">Cancel attack</button>
-                <button type="button" onClick={confirmDraft} disabled={submitting || !draft.name.trim() || !Number.isFinite(draft.attackBonus)}
+                <button type="button" onClick={confirmDraft} disabled={submitting || !draft.name.trim() || !Number.isInteger(draft.attackBonus) || Math.abs(draft.attackBonus) > 1000 || draft.name.length > 120 || draft.damage.length > 500}
                     className="px-3 py-2 text-sm font-semibold rounded-md bg-emerald-700 text-white hover:bg-emerald-600 disabled:opacity-50">
                     {draft.clientId ? "Save attack changes" : "Add attack"}
                 </button>

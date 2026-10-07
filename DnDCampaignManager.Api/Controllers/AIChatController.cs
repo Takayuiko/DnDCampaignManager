@@ -221,6 +221,11 @@ public class AIChatController : ControllerBase
         {
             return StatusCode(StatusCodes.Status504GatewayTimeout, new { error = "The AI request timed out. Please try again." });
         }
+        catch (AIBusyException ex)
+        {
+            Response.Headers.RetryAfter = "5";
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = ex.Message });
+        }
         catch (AIRequestLimitException ex)
         {
             return UnprocessableEntity(new { error = ex.Message });
@@ -344,6 +349,10 @@ public class AIChatController : ControllerBase
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
             await WriteSseAsync("error", new { error = "The AI request timed out. Please try again." }, cancellationToken);
+        }
+        catch (AIBusyException ex)
+        {
+            await WriteSseAsync("error", new { error = ex.Message }, cancellationToken);
         }
         catch (AIRequestLimitException ex)
         {

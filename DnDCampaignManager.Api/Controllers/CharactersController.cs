@@ -87,12 +87,24 @@ namespace DnDCampaignManager.Api.Controllers
             var validationError = CharacterValidation.Errors(update).FirstOrDefault();
             if (validationError is not null) return BadRequest(validationError.ErrorMessage);
 
+            if (update.Version is null)
+                return BadRequest("Reload the character before saving; its version is required.");
+            if (update.Version != character.Version)
+                return CharacterConflict();
+
             CharacterMapping.Apply(character, update);
+            character.Version = Guid.NewGuid();
 
-            await _dnDxDbContext.SaveChangesAsync();
-
-            if (transaction is not null) await transaction.CommitAsync();
-            return NoContent();
+            try
+            {
+                await _dnDxDbContext.SaveChangesAsync();
+                if (transaction is not null) await transaction.CommitAsync();
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                return CharacterConflict();
+            }
+            return Ok(new CharacterSaveResponseDto(character.Version));
         }
 
         [HttpGet]
@@ -144,6 +156,12 @@ namespace DnDCampaignManager.Api.Controllers
 
             return Ok(CharacterMapping.ToResponse(character));
         }
+
+        private ConflictObjectResult CharacterConflict() => Conflict(new
+        {
+            code = "character_version_conflict",
+            error = "This character was changed by someone else. Your edits have not been saved. Reload the latest character before saving again."
+        });
 
         private int GetUserId()
         {

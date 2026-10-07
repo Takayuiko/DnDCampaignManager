@@ -9,6 +9,15 @@ Configure `OpenAI:Limits` in server configuration. Environment variables use nam
 - `RequestTimeoutSeconds`: 120 seconds for chat history/context loading and generation, including sequential tools and continuations. Caller cancellation is linked to the deadline. The provider also enforces a deadline for callers outside the controller.
 - `EmbeddingTimeoutSeconds`: 30 seconds per provider batch, including retrieval and ingestion.
 - `TranscriptionTimeoutSeconds`: 120 seconds per transcription provider call.
+- `MaxConcurrentRequests`: 4 admitted provider operations across all users, chat, streaming, embeddings (including background indexing), and transcription in one API process.
+- `MaxQueuedRequests`: 8 waiting operations, in arrival order; excess work is rejected immediately.
+- `ConcurrencyWaitSeconds`: 5 seconds maximum waiting for capacity. Waiting also respects caller cancellation and the existing operation deadline.
+
+The concurrency limiter is shared across request scopes. Chat holds one permit throughout its tool loop and streaming lifetime; embedding and transcription calls each hold a permit for their provider operation. Completion, exceptions, cancellation, and disposing a partial stream release capacity. Limits clamp concurrent operations to 1–32, queued operations to 0–64, and queue wait to 1–30 seconds. Set queue size to zero to reject overload immediately. These are process-wide limits; multiple API replicas each have their own allowance.
+
+Capacity rejection returns HTTP 503 with `Retry-After: 5` for chat and transcription, or a readable error event for an already-open chat stream. Retrieval can fall back to current campaign facts when query embeddings are busy. Ingestion keeps its existing saved-source and retryable failure behavior; saturation does not lose maps or session notes. Admission failures do not send a provider request. Existing per-user requests-per-minute limits remain in effect. No database migration is required.
+
+`tests/AIConcurrencyChecks` covers queue bounds, cancellation, wait expiry, permit recovery and singleton scope sharing. `tests/ToolingChecks` checks shared admission across real provider adapters using fake transports, tool-loop permit lifetime and early stream disposal. CI discovers the new suite automatically.
 
 Character/byte budgets are deterministic application size bounds, not exact model input-token counts. They do not guarantee a particular bill. Configuration is clamped to supported ranges: context 1,000–100,000 characters; history 8,000–100,000; requests 16,000–1,000,000 bytes; output 256–32,000 tokens; chat/transcription 1–600 seconds; embeddings 1–120 seconds. Existing tool caps remain four continuation rounds and eight calls.
 

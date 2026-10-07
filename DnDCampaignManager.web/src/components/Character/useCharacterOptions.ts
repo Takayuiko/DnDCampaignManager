@@ -38,6 +38,7 @@ function useOptionGroup(kind: OptionKind, campaignId: number, setForm: Character
 
     useEffect(() => {
         const request = { active: true };
+        const controller = new AbortController();
         scope.current = request;
         const current = () => request.active;
         setOptions(initialOptions ?? []);
@@ -48,7 +49,7 @@ function useOptionGroup(kind: OptionKind, campaignId: number, setForm: Character
         pendingAdd.current = false;
         setLoading(!!campaignId && !initialOptions);
         if (campaignId && !initialOptions) {
-            void provider.load(campaignId).then(response => {
+            void provider.load(campaignId, controller.signal).then(response => {
                 if (current()) setOptions(response.data);
             }).catch(() => {
                 if (current()) setError(`Could not load ${provider.plural} for this campaign.`);
@@ -56,7 +57,7 @@ function useOptionGroup(kind: OptionKind, campaignId: number, setForm: Character
                 if (current()) setLoading(false);
             });
         }
-        return () => { request.active = false; };
+        return () => { request.active = false; controller.abort(); };
     }, [campaignId, initialOptions, provider]);
 
     async function add() {

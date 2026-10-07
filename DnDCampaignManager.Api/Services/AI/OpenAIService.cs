@@ -12,17 +12,19 @@ public sealed class OpenAIService : IAIService
     private readonly ILogger<OpenAIService> _logger;
     private readonly CampaignToolService _tools;
     private readonly AIRequestLimits _limits;
+    private readonly AIConcurrencyLimiter _concurrency;
 
     public OpenAIService(
         ResponsesClient client,
         IConfiguration configuration,
-        ILogger<OpenAIService> logger, CampaignToolService tools)
+        ILogger<OpenAIService> logger, CampaignToolService tools, AIConcurrencyLimiter concurrency)
     {
         _client = client;
         _configuration = configuration;
         _logger = logger;
         _tools = tools;
         _limits = new(configuration);
+        _concurrency = concurrency;
     }
 
     public string Model =>
@@ -38,6 +40,7 @@ public sealed class OpenAIService : IAIService
         using var deadline = _limits.Deadline(cancellationToken, _limits.RequestTimeoutSeconds);
         cancellationToken = deadline.Token;
         var options = BuildOptions(history, false, campaignContext, toolScope);
+        using var permit = await _concurrency.AcquireAsync(cancellationToken);
         var stopwatch = Stopwatch.StartNew();
         long input = 0, output = 0, total = 0;
         var calls = 0;
@@ -67,6 +70,7 @@ public sealed class OpenAIService : IAIService
         using var deadline = _limits.Deadline(cancellationToken, _limits.RequestTimeoutSeconds);
         cancellationToken = deadline.Token;
         var options = BuildOptions(history, true, campaignContext, toolScope);
+        using var permit = await _concurrency.AcquireAsync(cancellationToken);
         var stopwatch = Stopwatch.StartNew();
         long input = 0, output = 0, total = 0;
         var calls = 0;

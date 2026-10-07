@@ -19,6 +19,7 @@ public static class CharacterMapping
         return new CharacterResponseDto
         {
             Id = character.Id,
+            Version = character.Version,
             UserId = character.UserId,
             Name = character.Name,
             Class = character.Class,

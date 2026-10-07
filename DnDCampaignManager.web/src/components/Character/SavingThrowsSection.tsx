@@ -47,6 +47,8 @@ export default function SavingThrowsSection({ form, setForm }: CharacterSectionP
 
                         <input
                             type="number"
+                            min={-1000}
+                            max={1000}
                             value={st.miscBonus ?? 0}
                             onChange={(e) =>
                                 setForm((prev) => ({

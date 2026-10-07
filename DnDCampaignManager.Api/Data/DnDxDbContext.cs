@@ -31,6 +31,9 @@ namespace DnDCampingManager.Api.Data
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            modelBuilder.Entity<RefreshToken>().Property(x => x.TokenHash).HasMaxLength(64);
+            modelBuilder.Entity<RefreshToken>().Property(x => x.ReplacedByTokenHash).HasMaxLength(64);
+            modelBuilder.Entity<RefreshToken>().HasIndex(x => x.TokenHash).IsUnique();
             modelBuilder.Entity<CampaignMap>().HasOne(x => x.Campaign).WithMany()
                 .HasForeignKey(x => x.CampaignId).OnDelete(DeleteBehavior.Cascade);
             modelBuilder.Entity<CampaignMap>().Property(x => x.Title).HasMaxLength(160);

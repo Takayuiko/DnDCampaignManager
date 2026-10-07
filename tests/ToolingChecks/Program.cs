@@ -76,8 +76,9 @@ db.Characters.Add(privateCharacter); await db.SaveChangesAsync();
 Check((await tools.ExecuteAsync(scope, "GetCharacterInventory", JsonSerializer.Serialize(new { characterId = privateCharacter.Id }), default)).Contains("access denied"),
     "A member cannot use AI tools to read another player's inventory");
 Check((await tools.ExecuteAsync(scope, "GetCharacterInventory", "{\"characterId\":0}", default)).Contains("error"), "Invalid inventory arguments are rejected");
+using var concurrency = new AIConcurrencyLimiter(configuration);
 OpenAIService AI(ScriptedOpenAI handler) => new(new ResponsesClient(new ApiKeyCredential("test-key-not-real"),
-    new ResponsesClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(handler)) }), configuration, NullLogger<OpenAIService>.Instance, tools);
+    new ResponsesClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(handler)) }), configuration, NullLogger<OpenAIService>.Instance, tools, concurrency);
 var handler = new ScriptedOpenAI(character.Id);
 var completion = await AI(handler).GetChatResponseAsync([new AIMessage { Role = "user", Content = "What is Freya's HP?" }], toolScope: scope);
 Check(completion.Reply == "Freya has 7 HP." && completion.Usage.TotalTokens == 30 && completion.Usage.InputTokens == 20 && completion.Usage.OutputTokens == 10,
@@ -125,19 +126,19 @@ await AI(inventoryCalls).GetChatResponseAsync([new AIMessage { Role = "user", Co
 Check(inventoryCalls.Requests[1].Contains("Torch") && inventoryCalls.Requests[1].Contains("quantity"), "Model inventory tool continuation receives live item data");
 var budgetConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["OpenAI:Limits:MaxRequestBytes"] = "16000" }).Build();
 var byteHandler = new ScriptedOpenAI(character.Id);
-var byteAI = new OpenAIService(new ResponsesClient(new ApiKeyCredential("test-key-not-real"), new ResponsesClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(byteHandler)) }), budgetConfig, NullLogger<OpenAIService>.Instance, tools);
+var byteAI = new OpenAIService(new ResponsesClient(new ApiKeyCredential("test-key-not-real"), new ResponsesClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(byteHandler)) }), budgetConfig, NullLogger<OpenAIService>.Instance, tools, concurrency);
 try { await byteAI.GetChatResponseAsync([new AIMessage { Role = "user", Content = new string('界', 8000) }]); throw new Exception("Serialized context escaped budget"); }
 catch (InvalidOperationException) { Check(byteHandler.Requests.Count == 0, "Full request byte budget accounts for Unicode and JSON escaping before sending"); }
 var smallContextConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["OpenAI:Limits:MaxContextCharacters"] = "1000" }).Build();
 var boundedContext = await new CampaignKnowledgeService(db, new NoEmbeddings(), smallContextConfig, NullLogger<CampaignKnowledgeService>.Instance).BuildContextAsync(campaign.Id, player.Id, "Current characters", default);
 Check(boundedContext.Prompt.Length <= 1000 && boundedContext.Prompt.Contains("CharactersOmitted"), "Reference context shrinks whole records within its configured budget");
 var continuedBytes = new ScriptedOpenAI(character.Id) { ToolName = "GetCharacterInventory" };
-var continuedAI = new OpenAIService(new ResponsesClient(new ApiKeyCredential("test-key-not-real"), new ResponsesClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(continuedBytes)) }), budgetConfig, NullLogger<OpenAIService>.Instance, tools);
+var continuedAI = new OpenAIService(new ResponsesClient(new ApiKeyCredential("test-key-not-real"), new ResponsesClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(continuedBytes)) }), budgetConfig, NullLogger<OpenAIService>.Instance, tools, concurrency);
 try { await continuedAI.GetChatResponseAsync([], toolScope: scope); throw new Exception("Continuation escaped byte budget"); }
 catch (AIRequestLimitException) { Check(continuedBytes.Requests.Count == 1, "Large tool output is checked before sending its continuation"); }
 var outputConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["OpenAI:Limits:MaxOutputTokens"] = "256" }).Build();
 var exhausted = new ScriptedOpenAI(character.Id) { AlwaysCalls = true, OutputTokens = 256 };
-var outputAI = new OpenAIService(new ResponsesClient(new ApiKeyCredential("test-key-not-real"), new ResponsesClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(exhausted)) }), outputConfig, NullLogger<OpenAIService>.Instance, tools);
+var outputAI = new OpenAIService(new ResponsesClient(new ApiKeyCredential("test-key-not-real"), new ResponsesClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(exhausted)) }), outputConfig, NullLogger<OpenAIService>.Instance, tools, concurrency);
 try { await outputAI.GetChatResponseAsync([], toolScope: scope); throw new Exception("Output budget reset"); }
 catch (AIRequestLimitException) { Check(exhausted.Requests.Count == 1, "Exhausted output allowance prevents another model request"); }
 var missingUsage = new ScriptedOpenAI(character.Id) { MissingUsage = true };
@@ -152,21 +153,63 @@ try { await foreach (var update in AI(incompleteStream).StreamChatResponseAsync(
 catch (InvalidOperationException) { Check(incompleteEvents.All(e => e.Type != "completed"), "Incomplete streaming responses never emit successful completion"); }
 var deadlineConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["OpenAI:Limits:RequestTimeoutSeconds"] = "1", ["OpenAI:Limits:EmbeddingTimeoutSeconds"] = "1", ["OpenAI:Limits:TranscriptionTimeoutSeconds"] = "1" }).Build();
 var stalled = new ScriptedOpenAI(character.Id) { Pause = true };
-var timedAI = new OpenAIService(new ResponsesClient(new ApiKeyCredential("test-key-not-real"), new ResponsesClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(stalled)) }), deadlineConfig, NullLogger<OpenAIService>.Instance, tools);
+var timedAI = new OpenAIService(new ResponsesClient(new ApiKeyCredential("test-key-not-real"), new ResponsesClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(stalled)) }), deadlineConfig, NullLogger<OpenAIService>.Instance, tools, concurrency);
 try { await timedAI.GetChatResponseAsync([]); throw new Exception("Provider never timed out"); }
 catch (OperationCanceledException) { Console.WriteLine("PASS: Provider deadline cancels a stalled request"); }
 
 var stalledEmbeddings = new ScriptedOpenAI(character.Id) { Pause = true };
 var embeddingProvider = new OpenAIEmbeddingService(new EmbeddingClient("text-embedding-3-small", new ApiKeyCredential("test-key-not-real"),
-    new OpenAI.OpenAIClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(stalledEmbeddings)) }), deadlineConfig);
+    new OpenAI.OpenAIClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(stalledEmbeddings)) }), deadlineConfig, concurrency);
 try { await embeddingProvider.EmbedAsync(["Test passage"], default); throw new Exception("Embedding request never timed out"); }
 catch (OperationCanceledException) { Console.WriteLine("PASS: Embedding provider deadline cancels stalled ingestion/retrieval"); }
 var stalledAudio = new ScriptedOpenAI(character.Id) { Pause = true };
 var audioProvider = new OpenAIAudioTranscriptionService(new AudioClient("gpt-transcribe", new ApiKeyCredential("test-key-not-real"),
-    new OpenAI.OpenAIClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(stalledAudio)) }), deadlineConfig);
+    new OpenAI.OpenAIClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(stalledAudio)) }), deadlineConfig, concurrency);
 using var fakeAudio = new MemoryStream([1, 2, 3]);
 try { await audioProvider.TranscribeAsync(fakeAudio, "test.wav", default); throw new Exception("Audio request never timed out"); }
 catch (OperationCanceledException) { Console.WriteLine("PASS: Transcription provider deadline cancels a stalled upload"); }
+
+var strictConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+    ["OpenAI:Limits:MaxConcurrentRequests"] = "1", ["OpenAI:Limits:MaxQueuedRequests"] = "0"
+}).Build();
+using var strictGate = new AIConcurrencyLimiter(strictConfig);
+var guardedHandler = new ScriptedOpenAI(character.Id);
+var guardedChat = new OpenAIService(new ResponsesClient(new ApiKeyCredential("test-key-not-real"),
+    new ResponsesClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(guardedHandler)) }),
+    configuration, NullLogger<OpenAIService>.Instance, tools, strictGate);
+var blockedEmbeddings = new ScriptedOpenAI(character.Id);
+var guardedEmbeddings = new OpenAIEmbeddingService(new EmbeddingClient("test", new ApiKeyCredential("test-key-not-real"),
+    new OpenAI.OpenAIClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(blockedEmbeddings)) }), configuration, strictGate);
+var blockedAudio = new ScriptedOpenAI(character.Id);
+var guardedAudio = new OpenAIAudioTranscriptionService(new AudioClient("test", new ApiKeyCredential("test-key-not-real"),
+    new OpenAI.OpenAIClientOptions { Transport = new HttpClientPipelineTransport(new HttpClient(blockedAudio)) }), configuration, strictGate);
+using (var occupied = await strictGate.AcquireAsync(default))
+{
+    try { await guardedChat.GetChatResponseAsync([], toolScope: scope); throw new Exception("Chat escaped capacity"); }
+    catch (AIBusyException) { Console.WriteLine("PASS: Chat rejects overload before a provider call"); }
+    try { await foreach (var update in guardedChat.StreamChatResponseAsync([], toolScope: scope)) { } throw new Exception("Stream escaped capacity"); }
+    catch (AIBusyException) { Console.WriteLine("PASS: Streaming shares the same admission limit"); }
+    try { await guardedEmbeddings.EmbedAsync(["test"], default); throw new Exception("Embeddings escaped capacity"); }
+    catch (AIBusyException) { Console.WriteLine("PASS: Embeddings share capacity with chat"); }
+    using var audio = new MemoryStream([1, 2, 3]);
+    try { await guardedAudio.TranscribeAsync(audio, "test.wav", default); throw new Exception("Audio escaped capacity"); }
+    catch (AIBusyException) { Console.WriteLine("PASS: Transcription shares capacity with chat"); }
+}
+Check(guardedHandler.Requests.Count + blockedEmbeddings.Requests.Count + blockedAudio.Requests.Count == 0,
+    "Rejected work never reaches any paid provider transport");
+guardedHandler.ObserveRequest = async () => {
+    try { using var permit = await strictGate.AcquireAsync(default); throw new Exception("Chat released capacity during continuation"); }
+    catch (AIBusyException) { Console.WriteLine("PASS: Chat retains its permit through provider continuations"); }
+};
+await guardedChat.GetChatResponseAsync([], toolScope: scope);
+await using (var iterator = guardedChat.StreamChatResponseAsync([], toolScope: scope).GetAsyncEnumerator())
+{
+    Check(await iterator.MoveNextAsync(), "Streaming emits a token while retaining its permit");
+    try { using var permit = await strictGate.AcquireAsync(default); throw new Exception("Stream released active permit"); }
+    catch (AIBusyException) { Console.WriteLine("PASS: An active stream blocks competing provider work"); }
+}
+using (var permit = await strictGate.AcquireAsync(default))
+    Check(permit.IsAcquired, "Disposing a partial stream releases provider capacity");
 
 // Exercise the real MCP HTTP transport with JWT authentication, using rolled-back database fixtures.
 var builder = WebApplication.CreateBuilder();
@@ -240,7 +283,9 @@ sealed class ScriptedOpenAI(int characterId) : HttpMessageHandler {
     public string ToolName { get; init; } = "GetCharacter";
     public bool Incomplete { get; init; }
     public bool Pause { get; init; }
+    public Func<Task>? ObserveRequest { get; set; }
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) {
+        if (ObserveRequest is not null) await ObserveRequest();
         if (Pause) await Task.Delay(Timeout.Infinite, ct);
         var body = await request.Content!.ReadAsStringAsync(ct); Requests.Add(body);
         using var document = JsonDocument.Parse(body);

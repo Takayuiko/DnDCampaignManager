@@ -19,7 +19,7 @@ test('campaign dropdown opens the corresponding personal chat and removes genera
     const calls = [];
     const exportsObject = {};
     vm.runInNewContext(compile('api/aiApi.ts'), {
-        exports: exportsObject, require: () => ({ default: { post: async (url, body) => { calls.push({ url, body }); return { data: {} }; } } })
+        AbortController, DOMException, setTimeout, clearTimeout, exports: exportsObject, require: () => ({ default: { post: async (url, body) => { calls.push({ url, body }); return { data: {} }; } } })
     });
     await exportsObject.createConversation(undefined, 12);
     await exportsObject.createConversation();
@@ -29,7 +29,7 @@ test('campaign dropdown opens the corresponding personal chat and removes genera
     const states = []; let cursor = 0; let createdScope;
     const chat = {};
     vm.runInNewContext(compile('pages/AIChat.tsx'), {
-        exports: chat,
+        AbortController, DOMException, setTimeout, clearTimeout, exports: chat,
         require(name) {
             if (name === 'react') return {
                 useState(initial) {
@@ -58,12 +58,12 @@ test('campaign dropdown opens the corresponding personal chat and removes genera
     assert.equal(elements(render()).some(n => n.props?.children === '+ New'), false);
 });
 
-function sessionPage(owner = true, failTranscription = false) {
+function sessionPage(owner = true, failTranscription = false, deferredTranscription = null, retryStatus = 'ready') {
     const states = []; let cursor = 0;
     const exportsObject = {};
     const calls = [];
     vm.runInNewContext(compile('pages/SessionNotes.tsx'), {
-        exports: exportsObject, confirm: () => true,
+        AbortController, DOMException, setTimeout, clearTimeout, exports: exportsObject, confirm: () => true,
         require(name) {
             if (name === 'react') return {
                 useState(initial) {
@@ -71,6 +71,10 @@ function sessionPage(owner = true, failTranscription = false) {
                     if (!(index in states)) states[index] = index === 0 ? { id: 12, name: 'Campaign', ownerId: 1 }
                         : index === 2 ? false : typeof initial === 'function' ? initial() : initial;
                     return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }];
+                }, useRef(initial) {
+                    const index = cursor++;
+                    if (!(index in states)) states[index] = { current: initial };
+                    return states[index];
                 }, useEffect() {}
             };
             if (name === 'react-router-dom') return { useParams: () => ({ campaignId: '12' }), Link: 'a' };
@@ -78,7 +82,11 @@ function sessionPage(owner = true, failTranscription = false) {
             if (name === '../api/campaignApi') return {};
             if (name === '../Utils/apiError') return { extractApiError: (_, fallback) => fallback };
             if (name === '../api/sessionNotesApi') return {
-                async transcribeSessionAudio() {
+                async transcribeSessionAudio(_, audio, signal) {
+                    if (deferredTranscription) {
+                        deferredTranscription.signal = signal;
+                        return new Promise(resolve => { deferredTranscription.resolve = resolve; });
+                    }
                     if (failTranscription) throw new Error('Provider diagnostics');
                     return { data: { text: 'Freya found a silver key in the recorded session.', model: 'test-transcription' } };
                 },
@@ -86,7 +94,7 @@ function sessionPage(owner = true, failTranscription = false) {
                     calls.push({ campaignId, body });
                     return { data: { ...body, id: 1, campaignId, indexStatus: 'failed', chunkCount: 0, embeddingInputTokens: 0 } };
                 },
-                async indexSessionNote() { return { data: { ...states[1][0], indexStatus: 'ready', chunkCount: 1, embeddingInputTokens: 15 } }; }
+                async indexSessionNote() { return { data: { ...states[1][0], indexStatus: retryStatus, chunkCount: 1, embeddingInputTokens: 15 } }; }
             };
             return require(name);
         }
@@ -107,6 +115,33 @@ test('a failed embedding leaves saved notes visible and retry makes them searcha
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(page.states[1][0].indexStatus, 'ready');
     assert.equal(page.states[3], false);
+});
+
+test('cancel transcription preserves the draft and ignores a late response', async () => {
+    const deferred = {}, page = sessionPage(true, false, deferred);
+    let nodes = elements(page.render());
+    nodes.find(node => node.type === 'textarea').props.onChange({ target: { value: 'Unsaved notes' } });
+    nodes.find(node => node.type === 'input' && node.props.type === 'file').props.onChange({ target: { files: [{ size: 1 }] } });
+    nodes = elements(page.render());
+    nodes.find(node => node.type === 'button' && node.props.children === 'Transcribe audio').props.onClick();
+    nodes = elements(page.render());
+    nodes.find(node => node.type === 'button' && node.props.children === 'Cancel transcription').props.onClick();
+    assert.equal(deferred.signal.aborted, true);
+    deferred.resolve({ data: { text: 'Late transcript' } });
+    await new Promise(resolve => setImmediate(resolve));
+    nodes = elements(page.render());
+    assert.equal(nodes.find(node => node.type === 'textarea').props.value, 'Unsaved notes');
+    assert.equal(nodes.find(node => node.type === 'button' && node.props.children === 'Transcribe audio').props.disabled, false);
+    assert.ok(nodes.some(node => node.props.role === 'status' && /cancelled/.test(node.props.children)));
+});
+
+test('an active indexing lease is displayed as work in progress rather than a provider failure', async () => {
+    const page = sessionPage(true, false, null, 'pending'); page.render();
+    page.states[1] = [{ id: 1, title: 'Saved session', content: 'Notes', sessionNumber: 1, indexStatus: 'failed' }];
+    elements(page.render()).find(node => node.type === 'button' && node.props.children === 'Retry indexing').props.onClick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(page.states[1][0].indexStatus, 'pending');
+    assert.ok(elements(page.render()).some(node => node.props.role === 'status' && /already in progress/.test(node.props.children)));
 });
 
 test('campaign players can read notes but do not see an authoring form', () => {
@@ -143,7 +178,7 @@ test('players cannot select general chat and need campaign membership to start a
         let cursor = 0;
         const chat = {};
         vm.runInNewContext(compile('pages/AIChat.tsx'), {
-            exports: chat,
+            AbortController, DOMException, setTimeout, clearTimeout, exports: chat,
             require(name) {
                 if (name === 'react') return {
                     useState(initial) {
@@ -170,7 +205,7 @@ test('unconfigured AI disables sending while saved conversations remain visible'
     const states = []; let cursor = 0; let requests = 0;
     const chat = {};
     vm.runInNewContext(compile('pages/AIChat.tsx'), {
-        exports: chat,
+        AbortController, DOMException, setTimeout, clearTimeout, exports: chat,
         require(name) {
             if (name === 'react') return {
                 useState(initial) {

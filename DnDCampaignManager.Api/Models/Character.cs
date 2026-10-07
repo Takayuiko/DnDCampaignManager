@@ -6,6 +6,9 @@ namespace DnDCampaignManager.Api.Models
     {
         public int Id { get; set; }
 
+        [System.ComponentModel.DataAnnotations.ConcurrencyCheck]
+        public Guid Version { get; set; } = Guid.NewGuid();
+
         // Ownership
         public int UserId { get; set; }
         public User User { get; set; } = null!;

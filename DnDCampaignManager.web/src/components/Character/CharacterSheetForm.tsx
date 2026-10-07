@@ -29,6 +29,7 @@ type Props = {
 
     submitLabel: string;
     submitting?: boolean;
+    saveDisabled?: boolean;
     error?: string | null;
 
     initialOptions?: CharacterOptionsPayload | null;
@@ -38,12 +39,14 @@ type Props = {
 export default function CharacterSheetForm({
     title,
     subtitle,
+    topRight,
     form,
     setForm,
     onCancel,
     onSubmit,
     submitLabel,
     submitting,
+    saveDisabled,
     error,
     initialOptions,
     characterId
@@ -68,7 +71,7 @@ export default function CharacterSheetForm({
     const [attackDraft, setAttackDraft] = useState<AttackDraft | null>(null);
 
     const EditView = <form onSubmit={event => {
-        if (attackDraft) { event.preventDefault(); return; }
+        if (attackDraft || saveDisabled || submitting) { event.preventDefault(); return; }
         onSubmit(event);
     }} className="space-y-6">
         <IdentitySection form={form} setForm={setForm} handleChange={handleChange} options={options} />
@@ -82,7 +85,7 @@ export default function CharacterSheetForm({
             <Button type="button" variant="secondary" onClick={onCancel} disabled={submitting}>
                 Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={submitting || !!attackDraft}>
+            <Button type="submit" variant="primary" disabled={submitting || saveDisabled || !!attackDraft}>
                 {submitting ? "Saving..." : submitLabel}
             </Button>
         </div>
@@ -111,6 +114,7 @@ export default function CharacterSheetForm({
                     }}
                 >{tab === "character" ? "Character" : "Inventory"}</Button>)}
             </div> : <span className="text-sm font-semibold text-stone-600">{isReadView ? "Character & inventory" : "Character"}</span>}
+            {topRight}
             <button type="button" onClick={() => setIsReadView(current => !current)}
                 className="ml-auto rounded-lg border border-sky-700 bg-sky-700 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-800 focus:outline-none focus:ring-2 focus:ring-sky-600 focus:ring-offset-2">
                 {isReadView ? "Edit View" : "Read View"}

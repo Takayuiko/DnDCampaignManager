@@ -29,20 +29,23 @@ export default function Dashboard() {
     const [error, setError] = useState<string | null>(null);
     const isDM = user?.role === "DM";
 
-    const loadCampaigns = async () => {
+    const loadCampaigns = async (signal?: AbortSignal) => {
         setCampaignsLoading(true);
         setError(null);
         try {
-            const res = await getCampaigns();
+            const res = await getCampaigns(signal);
+            if (signal?.aborted) return;
             setCampaigns(res.data);
         } catch (err: unknown) {
-            setError(extractApiError(err, "Unable to load campaigns."));
-        } finally { setCampaignsLoading(false); }
+            if (!signal?.aborted) setError(extractApiError(err, "Unable to load campaigns."));
+        } finally { if (!signal?.aborted) setCampaignsLoading(false); }
     };
 
     useEffect(() => {
         if (loading || !user) return;
-            loadCampaigns();
+        const controller = new AbortController();
+        void loadCampaigns(controller.signal);
+        return () => controller.abort();
     }, [loading, user]);
 
     return (

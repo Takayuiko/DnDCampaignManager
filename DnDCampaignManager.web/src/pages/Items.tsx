@@ -23,6 +23,7 @@ export default function Items() {
 
     useEffect(() => {
         let active = true;
+        const controller = new AbortController();
         setLoading(true);
         setCatalog(null);
         setError(null);
@@ -30,14 +31,14 @@ export default function Items() {
         const load = async () => {
             try {
                 if (!Number.isInteger(campaignId) || campaignId <= 0) throw new Error("Invalid campaign id.");
-                const response = await getItems(campaignId);
+                const response = await getItems(campaignId, controller.signal);
                 if (active) setCatalog(response.data);
             } catch (err: unknown) {
                 if (active) setError(extractApiError(err, "Unable to load items."));
             } finally { if (active) setLoading(false); }
         };
         void load();
-        return () => { active = false; };
+        return () => { active = false; controller.abort(); };
     }, [campaignId]);
 
     const run = async (operation: () => Promise<string>) => {

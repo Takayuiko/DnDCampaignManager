@@ -55,7 +55,8 @@ var listener = new TcpListener(IPAddress.Loopback,0); listener.Start();
 var port = ((IPEndPoint)listener.LocalEndpoint).Port; listener.Stop();
 var start = new ProcessStartInfo("dotnet") { WorkingDirectory = apiDirectory, UseShellExecute = false,
     RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
-start.ArgumentList.Add(Path.Combine(apiDirectory,"bin","StartupVerification","DnDCampaignManager.Api.dll"));
+start.ArgumentList.Add(args.Length > 1 ? Path.GetFullPath(args[1]) :
+    Path.Combine(apiDirectory,"bin","StartupVerification","DnDCampaignManager.Api.dll"));
 start.ArgumentList.Add("--urls"); start.ArgumentList.Add($"http://127.0.0.1:{port}");
 start.ArgumentList.Add("--OpenAI:ApiKey="); start.ArgumentList.Add("--Logging:LogLevel:Default=Warning");
 start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development"; start.Environment["DOTNET_ENVIRONMENT"] = "Development";

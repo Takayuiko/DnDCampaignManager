@@ -19,7 +19,7 @@ function page(failPromotion = false) {
     const calls = [];
     const exportsObject = {};
     vm.runInNewContext(compile('pages/DungeonMasters.tsx'), {
-        exports: exportsObject,
+        AbortController, DOMException, setTimeout, clearTimeout, exports: exportsObject,
         require(name) {
             if (name === 'react') return {
                 useState(initial) {
@@ -81,7 +81,7 @@ test('the admin route requires both DM role and the admin flag', () => {
     for (const user of [{ role: 'Player', isAdmin: false }, { role: 'DM', isAdmin: false }, { role: 'Player', isAdmin: true }, { role: 'DM', isAdmin: true }]) {
         const exportsObject = {};
         vm.runInNewContext(compile('auth/RoleRoute.tsx'), {
-            exports: exportsObject,
+            AbortController, DOMException, setTimeout, clearTimeout, exports: exportsObject,
             require(name) {
                 if (name === './AuthContext') return { useAuth: () => ({ user, loading: false }) };
                 if (name === 'react-router-dom') return { Navigate: 'redirect' };

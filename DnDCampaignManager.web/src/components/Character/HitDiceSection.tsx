@@ -11,6 +11,8 @@ export default function HitDiceSection({ form, setForm }: CharacterSectionProps)
                 <div>
                     <label className="block text-sm font-semibold text-stone-700">Die</label>
                     <input
+                        maxLength={16}
+                        required={form.hitDice.total > 0}
                         value={form.hitDice.die}
                         onChange={(e) =>
                             setForm((prev) => ({
@@ -28,6 +30,7 @@ export default function HitDiceSection({ form, setForm }: CharacterSectionProps)
                     <input
                         type="number"
                         min={0}
+                        max={1000}
                         value={form.hitDice.total}
                         onChange={(e) => {
                             const v = Number(e.target.value);

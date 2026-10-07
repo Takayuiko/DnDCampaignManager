@@ -29,8 +29,8 @@ export default function AbilitiesSkillsSection({ form, setForm, handleChange }: 
                         <input
                             type="number"
                             name={key}
-                            min={1}
-                            max={30}
+                            min={0}
+                            max={100}
                             value={form[key]}
                             onChange={handleChange}
                             className="w-24 text-center border border-stone-400 rounded-md p-1 bg-white"
@@ -118,6 +118,8 @@ export default function AbilitiesSkillsSection({ form, setForm, handleChange }: 
 
                                         <input
                                             type="number"
+                                            min={-1000}
+                                            max={1000}
                                             value={sk.miscBonus ?? 0}
                                             onChange={(e) => {
                                                 const v = Number(e.target.value);

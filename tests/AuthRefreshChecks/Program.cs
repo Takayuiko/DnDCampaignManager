@@ -26,6 +26,9 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Logging;
 using System.Reflection;
 using System.Net;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Npgsql;
 
 var configuration = new ConfigurationBuilder().SetBasePath(Path.GetFullPath(args[0]))
     .AddJsonFile("appsettings.json").AddJsonFile("appsettings.Development.json", optional: true)
@@ -53,6 +56,52 @@ void Check(bool condition, string message)
 }
 await using var fixture = Database();
 await fixture.Database.MigrateAsync();
+// Exercise the actual upgrade and rollback in an isolated schema, even when
+// the configured database already has the latest migration applied.
+var schema = $"refresh_migration_{Guid.NewGuid():N}";
+// SQL identifiers cannot be bound as parameters; quote the generated name.
+var quotedSchema = new NpgsqlCommandBuilder().QuoteIdentifier(schema);
+var createSchemaSql = "CREATE SCHEMA " + quotedSchema;
+var dropSchemaSql = "DROP SCHEMA " + quotedSchema + " CASCADE";
+await fixture.Database.ExecuteSqlRawAsync(createSchemaSql);
+try
+{
+    var migrationConnection = new NpgsqlConnectionStringBuilder(connection) { SearchPath = schema }.ConnectionString;
+    await using var migrationDb = new DnDxDbContext(new DbContextOptionsBuilder<DnDxDbContext>()
+        .UseNpgsql(migrationConnection, options => options.MigrationsHistoryTable("__EFMigrationsHistory", schema)).Options);
+    var migrator = migrationDb.GetService<IMigrator>();
+    await migrator.MigrateAsync("20261007093259_SessionNoteIndexingLeases");
+    var legacyOwner = new User { Email = "migration@example.test", PasswordHash = "fixture", Role = Roles.Player };
+    migrationDb.Users.Add(legacyOwner); await migrationDb.SaveChangesAsync();
+    var legacyActive = RefreshTokenService.Create(legacyOwner.Id, out var legacyToken);
+    var consumedToken = "legacy-consumed-token";
+    await migrationDb.Database.ExecuteSqlInterpolatedAsync($"""
+        INSERT INTO "RefreshTokens" ("Token", "UserId", "ExpiresAt", "IsRevoked", "ReplacedByToken", "CreatedAt")
+        VALUES ({legacyToken}, {legacyOwner.Id}, {legacyActive.ExpiresAt}, FALSE, NULL, {legacyActive.CreatedAt}),
+               ({consumedToken}, {legacyOwner.Id}, {legacyActive.ExpiresAt}, TRUE, {legacyToken}, {legacyActive.CreatedAt});
+        """);
+    await migrator.MigrateAsync();
+    var migrated = await migrationDb.RefreshTokens.AsNoTracking().OrderBy(t => t.Id).ToListAsync();
+    Check(migrated.Count == 2 && migrated[0].TokenHash == RefreshTokenService.Hash(legacyToken) &&
+        !migrated[0].IsRevoked && migrated[0].ReplacedByTokenHash is null && migrated[1].IsRevoked &&
+        migrated[1].TokenHash == RefreshTokenService.Hash(consumedToken) &&
+        migrated[1].ReplacedByTokenHash == migrated[0].TokenHash &&
+        Math.Abs((migrated[0].ExpiresAt - legacyActive.ExpiresAt).TotalMilliseconds) < 1,
+        "Migration hashes existing tokens and replacements while preserving validity and history");
+    Check(await Controller(migrationDb, legacyOwner.Id, legacyToken).Refresh() is OkObjectResult,
+        "An existing pre-upgrade cookie can still rotate after migration");
+    migrationDb.ChangeTracker.Clear();
+    await migrator.MigrateAsync("20261007093259_SessionNoteIndexingLeases");
+    await using var rollbackConnection = new NpgsqlConnection(migrationConnection);
+    await rollbackConnection.OpenAsync();
+    await using var rollbackQuery = new NpgsqlCommand("SELECT count(*) FROM \"RefreshTokens\" WHERE NOT \"IsRevoked\"", rollbackConnection);
+    Check((long)(await rollbackQuery.ExecuteScalarAsync())! == 0,
+        "Rollback revokes irreversible hashes rather than making them bearer credentials");
+}
+finally
+{
+    await fixture.Database.ExecuteSqlRawAsync(dropSchemaSql);
+}
 var registrationEmail = $"registration-check-{Guid.NewGuid():N}@example.test";
 var legacyEmail = $"Legacy-check-{Guid.NewGuid():N}@example.test";
 var account = new User { Email = $"refresh-check-{Guid.NewGuid():N}@example.test", PasswordHash = "test-fixture", Role = Roles.Player };
@@ -103,6 +152,10 @@ try
         var login = Controller(loginDb, 0, "unused");
         Check(await login.Login(new LoginRequestDto { Email = $" {registrationEmail.ToUpperInvariant()} ", Password = "a long test password" }) is OkObjectResult,
             "New accounts can log in with casing and surrounding whitespace handled");
+        var cookie = Uri.UnescapeDataString(login.Response.Headers.SetCookie.ToString().Split(';')[0]["refreshToken=".Length..]);
+        Check(await loginDb.RefreshTokens.AnyAsync(t => t.UserId == registered.Id &&
+            t.TokenHash == RefreshTokenService.Hash(cookie)) && cookie.Length == 88,
+            "Login sends a random bearer cookie and persists its SHA-256 hash");
         Check(await login.Login(new LoginRequestDto { Email = registrationEmail, Password = "wrong" }) is UnauthorizedResult,
             "Incorrect passwords remain unauthorized");
     }
@@ -120,12 +173,15 @@ try
             "Registration cannot duplicate a legacy account by normalizing its email");
     }
     // Separate connections need committed fixtures; finally removes this test account and its tokens.
-    var original = RefreshTokenService.Create(account.Id);
+    var original = RefreshTokenService.Create(account.Id, out var originalToken);
+    var another = RefreshTokenService.Create(account.Id, out var anotherToken);
+    Check(originalToken != anotherToken && original.TokenHash != another.TokenHash && original.TokenHash.Length == 64,
+        "Issued tokens are independent random credentials with fixed-length hashes");
     fixture.RefreshTokens.Add(original);
     await fixture.SaveChangesAsync();
     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
-    async Task<(IActionResult First, IActionResult Second, AuthController SecondController)> Overlap(string token, bool logout)
+    async Task<(IActionResult First, IActionResult Second, AuthController FirstController, AuthController SecondController)> Overlap(string token, bool logout)
     {
         var attempts = new LockAttempts();
         await using var blocker = Database();
@@ -147,37 +203,47 @@ try
             await held.RollbackAsync(CancellationToken.None);
         }
         var results = await Task.WhenAll(firstTask, secondTask);
-        return (results[0], results[1], second);
+        return (results[0], results[1], first, second);
     }
 
-    var rotated = await Overlap(original.Token, logout: false);
+    var rotated = await Overlap(originalToken, logout: false);
     Check(new[] { rotated.First, rotated.Second }.Count(x => x is OkObjectResult) == 1 &&
         new[] { rotated.First, rotated.Second }.Count(x => x is UnauthorizedResult) == 1,
         "Overlapping refreshes produce exactly one success and one unauthorized response");
     fixture.ChangeTracker.Clear();
     var tokens = await fixture.RefreshTokens.Where(t => t.UserId == account.Id).ToListAsync();
     var replacement = tokens.Single(t => !t.IsRevoked);
-    Check(tokens.Count == 2 && tokens.Single(t => t.Id == original.Id).ReplacedByToken == replacement.Token,
+    Check(tokens.Count == 2 && tokens.Single(t => t.Id == original.Id).ReplacedByTokenHash == replacement.TokenHash,
         "A used token is revoked and has exactly one persisted replacement");
+    string CookieToken(AuthController controller) => Uri.UnescapeDataString(controller.Response.Headers.SetCookie
+        .Single(s => s!.StartsWith("refreshToken="))!.Split(';')[0]["refreshToken=".Length..]);
+    var replacementToken = CookieToken(rotated.First is OkObjectResult ? rotated.FirstController : rotated.SecondController);
+    Check(original.TokenHash == RefreshTokenService.Hash(originalToken) && original.TokenHash != originalToken &&
+        replacement.TokenHash == RefreshTokenService.Hash(replacementToken) && replacement.TokenHash != replacementToken,
+        "Original and rotated bearer credentials are stored only as hashes");
+    await using (var hashDb = Database())
+        Check(await Controller(hashDb, account.Id, replacement.TokenHash).Refresh(timeout.Token) is UnauthorizedResult,
+            "A stolen database hash cannot be used as a refresh cookie");
     await using (var replayDb = Database())
     {
-        var replay = Controller(replayDb, account.Id, original.Token);
+        var replay = Controller(replayDb, account.Id, originalToken);
         Check(await replay.Refresh(timeout.Token) is UnauthorizedResult && !replay.Response.Headers.ContainsKey("Set-Cookie"),
             "Replaying a consumed token fails without issuing a cookie");
     }
     await using (var nextDb = Database())
     {
-        var next = Controller(nextDb, account.Id, replacement.Token);
+        var next = Controller(nextDb, account.Id, replacementToken);
         Check(await next.Refresh(timeout.Token) is OkObjectResult &&
             next.Response.Headers.SetCookie.ToString().Contains("path=/api/auth") &&
             next.Response.Headers.SetCookie.ToString().Contains("httponly") &&
             next.Response.Headers.SetCookie.ToString().Contains("secure"),
             "The replacement remains usable and keeps the protected cookie settings");
+        replacementToken = CookieToken(next);
     }
     fixture.ChangeTracker.Clear();
     replacement = await fixture.RefreshTokens.SingleAsync(t => t.UserId == account.Id && !t.IsRevoked);
     var versionBefore = await fixture.Users.Where(u => u.Id == account.Id).Select(u => u.TokenVersion).SingleAsync();
-    var signedOut = await Overlap(replacement.Token, logout: true);
+    var signedOut = await Overlap(replacementToken, logout: true);
     Check(signedOut.Second is OkResult, "Logout succeeds while refresh is competing");
     Check(!await fixture.RefreshTokens.AnyAsync(t => t.UserId == account.Id && !t.IsRevoked) &&
         await fixture.Users.Where(u => u.Id == account.Id).Select(u => u.TokenVersion).SingleAsync() == versionBefore + 1,
@@ -197,14 +263,14 @@ try
     }
     else Check(signedOut.First is UnauthorizedResult, "Refresh after competing logout is unauthorized");
     await using var revokedDb = Database();
-    Check(await Controller(revokedDb, account.Id, replacement.Token).Refresh(timeout.Token) is UnauthorizedResult,
+    Check(await Controller(revokedDb, account.Id, replacementToken).Refresh(timeout.Token) is UnauthorizedResult,
         "A logged-out refresh token cannot recreate the session");
-    var expired = RefreshTokenService.Create(account.Id);
+    var expired = RefreshTokenService.Create(account.Id, out var expiredToken);
     expired.ExpiresAt = DateTime.UtcNow.AddMinutes(-1);
     fixture.RefreshTokens.Add(expired);
     await fixture.SaveChangesAsync();
     await using var expiredDb = Database();
-    Check(await Controller(expiredDb, account.Id, expired.Token).Refresh(timeout.Token) is UnauthorizedResult &&
+    Check(await Controller(expiredDb, account.Id, expiredToken).Refresh(timeout.Token) is UnauthorizedResult &&
         await Controller(expiredDb, account.Id, "unknown-token").Refresh(timeout.Token) is UnauthorizedResult,
         "Expired and unknown refresh tokens remain unauthorized");
 }

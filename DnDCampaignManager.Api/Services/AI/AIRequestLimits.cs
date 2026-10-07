@@ -14,6 +14,9 @@ public sealed class AIRequestLimits(IConfiguration configuration)
     public int RequestTimeoutSeconds => Limit(nameof(RequestTimeoutSeconds), 120, 1, 600);
     public int EmbeddingTimeoutSeconds => Limit(nameof(EmbeddingTimeoutSeconds), 30, 1, 120);
     public int TranscriptionTimeoutSeconds => Limit(nameof(TranscriptionTimeoutSeconds), 120, 1, 600);
+    public int MaxConcurrentRequests => Limit(nameof(MaxConcurrentRequests), 4, 1, 32);
+    public int MaxQueuedRequests => Limit(nameof(MaxQueuedRequests), 8, 0, 64);
+    public int ConcurrencyWaitSeconds => Limit(nameof(ConcurrencyWaitSeconds), 5, 1, 30);
 
     public CancellationTokenSource Deadline(CancellationToken ct, int seconds)
     {

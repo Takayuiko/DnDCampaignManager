@@ -14,7 +14,7 @@ function harness() {
     const api = {};
     for (const [kind, load, create] of [['class','getCharacterClass','addCharacterClass'],
         ['race','getCharacterRaces','addCharacterRace'],['background','getCharacterBackgrounds','addCharacterBackground']]) {
-        api[load] = id => { const job = { kind, id, ...deferred() }; loads.push(job); return job.promise; };
+        api[load] = (id, signal) => { const job = { kind, id, signal, ...deferred() }; loads.push(job); return job.promise; };
         api[create] = (id, body) => { const job = { kind, id, body, ...deferred() }; additions.push(job); return job.promise; };
     }
     const react = {
@@ -34,7 +34,7 @@ function harness() {
         const result = {}; modules.set(filename, result);
         vm.runInNewContext(ts.transpileModule(fs.readFileSync(filename,'utf8'), {
             compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
-        }).outputText, { exports: result, require(name) {
+        }).outputText, { AbortController, DOMException, setTimeout, clearTimeout, exports: result, require(name) {
             if (name === 'react') return react;
             if (name === '../../api/campaignApi') return api;
             if (name === 'axios') return { isAxiosError: error => error?.isAxiosError === true };
@@ -100,6 +100,7 @@ test('late loads and homebrew responses cannot change another campaign or an unm
     const h = harness(); h.render();
     h.render().class.setDraft('Old campaign class'); const add = h.render().class.add();
     h.switchCampaign(2); h.render();
+    assert.ok(h.loads.filter(job => job.id === 1).every(job => job.signal.aborted));
     const lateAdd = h.additions[0]; lateAdd.resolve({data:option('Old campaign class')}); await add;
     h.loads.filter(job=>job.id===1).forEach(job=>job.resolve({data:[option('Old result')]}));
     h.loads.filter(job=>job.id===2).forEach(job=>job.resolve({data:[option('New result')]}));
@@ -109,6 +110,7 @@ test('late loads and homebrew responses cannot change another campaign or an unm
     assert.equal(result.class.names.includes('Old campaign class'),false);
     assert.equal(h.form.class,'Fighter');
     h.render().class.setDraft('Unmounted'); const unmounted = h.render().class.add(); h.unmount();
+    assert.ok(h.loads.every(job => job.signal.aborted));
     h.additions.at(-1).resolve({data:option('Unmounted')}); await unmounted;
     assert.equal(h.form.class,'Fighter');
 });

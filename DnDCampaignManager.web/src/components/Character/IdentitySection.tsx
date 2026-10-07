@@ -19,6 +19,7 @@ export default function IdentitySection({ form, setForm, handleChange, options }
                     </label>
                     <input
                         name="name"
+                        maxLength={120}
                         value={form.name}
                         onChange={handleChange}
                         className="w-full border border-stone-400 rounded-md p-2 bg-white"
@@ -34,7 +35,7 @@ export default function IdentitySection({ form, setForm, handleChange, options }
                         type="number"
                         name="level"
                         min={1}
-                        max={20}
+                        max={100}
                         value={form.level}
                         onChange={handleChange}
                         className="w-full border border-stone-400 rounded-md p-2 bg-white"
@@ -296,6 +297,7 @@ export default function IdentitySection({ form, setForm, handleChange, options }
                     <input
                         type="number"
                         name="experiencePoints"
+                        max={1000000000}
                         min={0}
                         value={form.experiencePoints}
                         onChange={handleChange}

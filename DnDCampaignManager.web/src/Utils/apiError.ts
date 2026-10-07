@@ -6,7 +6,11 @@ function safeMessage(value: unknown): value is string {
 }
 
 export function extractApiError(err: unknown, fallback: string): string {
-    if (!isAxiosError(err) || !err.response) return fallback;
+    if (!isAxiosError(err)) return fallback;
+    if (err.code === "ECONNABORTED" || err.code === "ETIMEDOUT")
+        return "The request timed out. Reload to check whether your changes were saved before trying again.";
+    if (err.code === "ERR_CANCELED") return "Request cancelled.";
+    if (!err.response) return fallback;
     return extractApiResponseError(err.response.status, err.response.data, fallback);
 }
 

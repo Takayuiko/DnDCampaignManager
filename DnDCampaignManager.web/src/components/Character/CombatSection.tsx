@@ -15,6 +15,7 @@ export default function CombatSection({ form, handleChange }: Pick<CharacterSect
                     <input
                         type="number"
                         name="armorClass"
+                        max={1000}
                         min={0}
                         value={form.armorClass}
                         onChange={handleChange}
@@ -29,6 +30,8 @@ export default function CombatSection({ form, handleChange }: Pick<CharacterSect
                     <input
                         type="number"
                         name="initiative"
+                        max={1000}
+                        min={-1000}
                         value={form.initiative}
                         onChange={handleChange}
                         className="w-full border border-stone-400 rounded-md p-2 bg-white"
@@ -42,6 +45,7 @@ export default function CombatSection({ form, handleChange }: Pick<CharacterSect
                     <input
                         type="number"
                         name="speed"
+                        max={10000}
                         min={0}
                         value={form.speed}
                         onChange={handleChange}
@@ -63,6 +67,7 @@ export default function CombatSection({ form, handleChange }: Pick<CharacterSect
                         <input
                             type="number"
                             name="hitPointMax"
+                            max={1000000}
                             min={0}
                             value={form.hitPointMax}
                             onChange={handleChange}
@@ -77,6 +82,7 @@ export default function CombatSection({ form, handleChange }: Pick<CharacterSect
                         <input
                             type="number"
                             name="hitPointCurrent"
+                            max={form.hitPointMax}
                             min={0}
                             value={form.hitPointCurrent}
                             onChange={handleChange}
@@ -91,6 +97,7 @@ export default function CombatSection({ form, handleChange }: Pick<CharacterSect
                         <input
                             type="number"
                             name="hitPointTemporary"
+                            max={1000000}
                             min={0}
                             value={form.hitPointTemporary}
                             onChange={handleChange}

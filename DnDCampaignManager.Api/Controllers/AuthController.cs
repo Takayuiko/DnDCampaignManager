@@ -50,7 +50,7 @@ namespace DnDCampingManager.Api.Controllers
 
             user.PasswordHash = _hasher.HashPassword(user, Register.Password);
 
-            var refreshToken = RefreshTokenService.Create(user.Id);
+            var refreshToken = RefreshTokenService.Create(user.Id, out var rawToken);
             user.RefreshTokens.Add(refreshToken);
             _dndContext.Users.Add(user);
             try
@@ -65,7 +65,7 @@ namespace DnDCampingManager.Api.Controllers
 
             var accessToken = _jwtService.GenerateToken(user);
 
-            Response.Cookies.Append("refreshToken", refreshToken.Token, new CookieOptions
+            Response.Cookies.Append("refreshToken", rawToken, new CookieOptions
             {
                 HttpOnly = true,
                 Secure = true,
@@ -97,12 +97,12 @@ namespace DnDCampingManager.Api.Controllers
                 return Unauthorized();
 
             var accessToken = _jwtService.GenerateToken(user);
-            var refreshToken = RefreshTokenService.Create(user.Id);
+            var refreshToken = RefreshTokenService.Create(user.Id, out var rawToken);
 
             _dndContext.RefreshTokens.Add(refreshToken);
             await _dndContext.SaveChangesAsync();
 
-            Response.Cookies.Append("refreshToken", refreshToken.Token, new CookieOptions
+            Response.Cookies.Append("refreshToken", rawToken, new CookieOptions
             {
                 HttpOnly = true,
                 Secure = true,
@@ -155,8 +155,9 @@ namespace DnDCampingManager.Api.Controllers
             if (!Request.Cookies.TryGetValue("refreshToken", out var token))
                 return Unauthorized();
 
+            var tokenHash = RefreshTokenService.Hash(token);
             var userId = await _dndContext.RefreshTokens.AsNoTracking()
-                .Where(r => r.Token == token)
+                .Where(r => r.TokenHash == tokenHash)
                 .Select(r => (int?)r.UserId).SingleOrDefaultAsync(cancellationToken);
             if (userId is null) return Unauthorized();
 
@@ -171,7 +172,7 @@ namespace DnDCampingManager.Api.Controllers
 
             var stored = await _dndContext.RefreshTokens
                 .SingleOrDefaultAsync(r =>
-                    r.Token == token &&
+                    r.TokenHash == tokenHash &&
                     r.UserId == user.Id &&
                     !r.IsRevoked &&
                     r.ExpiresAt > DateTime.UtcNow, cancellationToken);
@@ -181,8 +182,8 @@ namespace DnDCampingManager.Api.Controllers
 
             stored.IsRevoked = true;
 
-            var newRefreshToken = RefreshTokenService.Create(stored.UserId);
-            stored.ReplacedByToken = newRefreshToken.Token;
+            var newRefreshToken = RefreshTokenService.Create(stored.UserId, out var rawToken);
+            stored.ReplacedByTokenHash = newRefreshToken.TokenHash;
 
             _dndContext.RefreshTokens.Add(newRefreshToken);
             var newAccessToken = _jwtService.GenerateToken(user);
@@ -192,7 +193,7 @@ namespace DnDCampingManager.Api.Controllers
             // Set new refresh cookie
             Response.Cookies.Append(
                 "refreshToken",
-                newRefreshToken.Token,
+                rawToken,
                 new CookieOptions
                 {
                     HttpOnly = true,

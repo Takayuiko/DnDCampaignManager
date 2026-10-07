@@ -16,7 +16,7 @@ function nodes(tree) {
 function harness(canAssign, failure = false) {
     const states = [], effects = [], calls = [], exports = {};
     let cursor = 0, initialized = false;
-    vm.runInNewContext(compiled, { exports, require(name) {
+    vm.runInNewContext(compiled, { AbortController, DOMException, setTimeout, clearTimeout, exports, require(name) {
         if (name === 'react') return {
             useState(initial) {
                 const index = cursor++;

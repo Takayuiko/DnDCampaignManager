@@ -180,6 +180,12 @@ namespace DnDCampaignManager.Api.Migrations
                     b.Property<string>("EmbeddingModel")
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("IndexLeaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("IndexLeaseUntil")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("IndexStatus")
                         .IsRequired()
                         .HasColumnType("text");
@@ -499,6 +505,10 @@ namespace DnDCampaignManager.Api.Migrations
                     b.Property<int>("UserId")
                         .HasColumnType("integer");
 
+                    b.Property<Guid>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
                     b.Property<int>("Wisdom")
                         .HasColumnType("integer");
 
@@ -769,17 +779,22 @@ namespace DnDCampaignManager.Api.Migrations
                     b.Property<bool>("IsRevoked")
                         .HasColumnType("boolean");
 
-                    b.Property<string>("ReplacedByToken")
-                        .HasColumnType("text");
+                    b.Property<string>("ReplacedByTokenHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
-                    b.Property<string>("Token")
+                    b.Property<string>("TokenHash")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<int>("UserId")
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
 
                     b.HasIndex("UserId");
 

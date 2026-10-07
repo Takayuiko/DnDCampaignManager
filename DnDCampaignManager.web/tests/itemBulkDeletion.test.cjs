@@ -15,7 +15,7 @@ function harness(canManage = true, failDelete = false) {
     const states = [], effects = [], calls = [], exports = {};
     let cursor = 0, initialized = false;
     let items = [{ id: 8, name: 'Torch', category: 'Gear', description: '', weightLb: 1, costGp: 0.01, source: null }];
-    vm.runInNewContext(compiled, { exports, require(name) {
+    vm.runInNewContext(compiled, { AbortController, DOMException, setTimeout, clearTimeout, exports, require(name) {
         if (name === 'react') return {
             useState(initial) { const i = cursor++; if (!(i in states)) states[i] = initial;
                 return [states[i], value => { states[i] = typeof value === 'function' ? value(states[i]) : value; }]; },

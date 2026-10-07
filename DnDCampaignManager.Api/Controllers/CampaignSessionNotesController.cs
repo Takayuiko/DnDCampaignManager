@@ -44,7 +44,7 @@ public sealed class CampaignSessionNotesController(DnDxDbContext db, CampaignKno
         // Save the source first. A provider failure must not lose the DM's notes.
         await db.SaveChangesAsync(ct);
         await knowledge.IndexAsync(note.Id, campaignId, UserId, ct);
-        return Ok(await GetDto(note.Id, ct));
+        return await GetResult(note.Id, campaignId, ct);
     }
 
     [HttpPost("{noteId:long}/index")]
@@ -57,7 +57,7 @@ public sealed class CampaignSessionNotesController(DnDxDbContext db, CampaignKno
         if (!knowledge.IsIndexingAvailable)
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = AIServiceRegistration.UnavailableMessage });
         await knowledge.IndexAsync(noteId, campaignId, UserId, ct);
-        return Ok(await GetDto(noteId, ct));
+        return await GetResult(noteId, campaignId, ct);
     }
 
     [HttpDelete("{noteId:long}")]
@@ -72,8 +72,13 @@ public sealed class CampaignSessionNotesController(DnDxDbContext db, CampaignKno
         return NoContent();
     }
 
-    private Task<SessionNoteDto> GetDto(long noteId, CancellationToken ct) => db.CampaignSessionNotes.AsNoTracking()
-        .Where(x => x.Id == noteId).Select(x => new SessionNoteDto(x.Id, x.CampaignId, x.SessionNumber,
-            x.Title, x.Content, x.PlayedOn, x.CreatedAtUtc, x.IndexStatus, x.EmbeddingModel,
-            x.EmbeddingDimensions, x.EmbeddingInputTokens, x.Chunks.Count)).SingleAsync(ct);
+    private async Task<IActionResult> GetResult(long noteId, int campaignId, CancellationToken ct)
+    {
+        if (!await knowledge.CanManageAsync(campaignId, UserId, ct)) return NotFound();
+        var result = await db.CampaignSessionNotes.AsNoTracking()
+            .Where(x => x.Id == noteId && x.CampaignId == campaignId).Select(x => new SessionNoteDto(x.Id, x.CampaignId, x.SessionNumber,
+                x.Title, x.Content, x.PlayedOn, x.CreatedAtUtc, x.IndexStatus, x.EmbeddingModel,
+                x.EmbeddingDimensions, x.EmbeddingInputTokens, x.Chunks.Count)).SingleOrDefaultAsync(ct);
+        return result is null ? NotFound() : Ok(result);
+    }
 }

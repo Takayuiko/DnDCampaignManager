@@ -45,6 +45,11 @@ public sealed class SessionAudioController(CampaignKnowledgeService knowledge, I
             return Ok(new SessionTranscriptDto(text, transcription.Model));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (AIBusyException ex)
+        {
+            Response.Headers.RetryAfter = "5";
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ex.Message);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Session audio transcription failed for campaign {CampaignId}.", campaignId);

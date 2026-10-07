@@ -26,6 +26,7 @@
         HitDiceDto? HitDice,
         SavingThrowsDto SavingThrows,
         List<CharacterAttackDto>? Attacks,
-        List<CharacterSkillDto>? Skills = null
+        List<CharacterSkillDto>? Skills = null,
+        Guid? Version = null
     ) : ICharacterWriteDto;
 }

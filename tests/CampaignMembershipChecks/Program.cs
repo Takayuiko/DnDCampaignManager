@@ -159,6 +159,47 @@ var request = JsonSerializer.Deserialize<CreateCharacterDto>("""
 {"Name":"Freya","Class":"Fighter","Race":"Human","Level":1,"Background":"Soldier","Alignment":"Neutral","Strength":10,"Dexterity":10,"Constitution":10,"Intelligence":10,"Wisdom":10,"Charisma":10,"ProficiencyBonus":2,"HitPointMax":10,"HitPointCurrent":10,"Skills":[],"SavingThrows":{}}
 """)!;
 var characters = new CharactersController(db) { ControllerContext = Context(player) };
+var boundary = request with { Name = new string('x', 120), Class = new string('x', 120), Race = new string('x', 120),
+    Background = new string('x', 120), Alignment = new string('x', 80), Level = 100, ExperiencePoints = 1000000000,
+    Strength = 0, Dexterity = 100, ProficiencyBonus = 100, ArmorClass = 1000, Initiative = -1000, Speed = 10000,
+    HitPointMax = 1000000, HitPointCurrent = 1000000, HitPointTemporary = 1000000,
+    HitDice = new HitDiceDto(new string('d', 16), 1000, 1000),
+    Attacks = Enumerable.Range(0, 50).Select(_ => new CharacterAttackDto { Name = new string('x', 120), Damage = new string('x', 500), AttackBonus = -1000 }).ToList() };
+foreach (var (input, valid) in new (CreateCharacterDto, bool)[] {
+    (boundary, true), (request with { HitDice = new HitDiceDto("", 0, 0) }, true),
+    (request with { Name = " " }, false), (request with { Class = new string('x', 121) }, false),
+    (request with { Race = null! }, false), (request with { Background = new string('x', 121) }, false),
+    (request with { Alignment = new string('x', 81) }, false), (request with { Level = 0 }, false),
+    (request with { Level = 101 }, false), (request with { ExperiencePoints = -1 }, false),
+    (request with { ExperiencePoints = 1000000001 }, false), (request with { Strength = -1 }, false),
+    (request with { Charisma = 101 }, false), (request with { ProficiencyBonus = 101 }, false),
+    (request with { ArmorClass = 1001 }, false), (request with { Initiative = -1001 }, false),
+    (request with { Speed = 10001 }, false), (request with { HitPointTemporary = 1000001 }, false),
+    (request with { HitPointCurrent = 11 }, false), (request with { HitPointMax = -1 }, false),
+    (request with { HitDice = new HitDiceDto("", 1, 0) }, false),
+    (request with { HitDice = new HitDiceDto("d8", 2, 3) }, false),
+    (request with { HitDice = new HitDiceDto("d8", 1001, 0) }, false),
+    (request with { Attacks = boundary.Attacks!.Append(new CharacterAttackDto { Name = "Extra" }).ToList() }, false),
+    (request with { Attacks = [new CharacterAttackDto { Name = " " }] }, false),
+    (request with { Attacks = [new CharacterAttackDto { Name = "Sword", Damage = new string('x', 501) }] }, false),
+    (request with { Attacks = [new CharacterAttackDto { Name = "Sword", AttackBonus = 1001 }] }, false),
+    (request with { Skills = [new CharacterSkillDto { MiscBonus = -1001 }] }, false),
+    (request with { SavingThrows = new SavingThrowsDto { Wisdom = new SavingThrowDto { MiscBonus = 1001 } } }, false)
+})
+{
+    var update = JsonSerializer.Deserialize<UpdateCharacterDto>(JsonSerializer.Serialize(input))!;
+    foreach (var contract in new ICharacterWriteDto[] { input, update })
+    {
+        var context = new ActionContext(new DefaultHttpContext { RequestServices = provider },
+            new RouteData(), new ActionDescriptor(), new ModelStateDictionary());
+        validator.Validate(context, null, "", contract);
+        Check(context.ModelState.IsValid == valid && !CharacterValidation.Errors(contract).Any() == valid,
+            $"Character {contract.GetType().Name} field boundaries match MVC and service validation");
+    }
+}
+Check(await characters.CreateCharacter(first.Id, request with { Name = new string('x', 121) }) is BadRequestObjectResult &&
+    !await db.Characters.AnyAsync(c => c.CampaignId == first.Id && c.UserId == player.Id),
+    "Oversized character creation is rejected before persistence");
 Check(await characters.CreateCharacter(first.Id, request) is OkObjectResult, "Invited player can create a character");
 foreach (var input in new ICharacterWriteDto[] {
     request with { Skills = [new CharacterSkillDto { Skill = (SkillType)999 }] },
@@ -348,11 +389,21 @@ Check(await characters.CreateCharacter(capacityCampaign.Id, request) is Conflict
 characters.ControllerContext = Context(dm);
 Check(await characters.CreateCharacter(capacityCampaign.Id, request) is ConflictObjectResult,
     "The six-character limit also applies to the campaign owner");
+async Task<IActionResult> UpdateCharacterCurrent(int campaignId, int characterId, UpdateCharacterDto update)
+{
+    var version = await db.Characters.Where(c => c.Id == characterId).Select(c => c.Version).SingleAsync();
+    return await characters.UpdateCharacter(campaignId, characterId, update with { Version = version });
+}
 var hpUpdate = JsonSerializer.Deserialize<UpdateCharacterDto>("""
 {"Name":"Freya","Class":"Fighter","Race":"Human","Level":1,"Background":"Soldier","Alignment":"Neutral","Strength":10,"Dexterity":10,"Constitution":10,"Intelligence":10,"Wisdom":10,"Charisma":10,"ProficiencyBonus":2,"HitPointMax":10,"HitPointCurrent":7,"Skills":[],"SavingThrows":{}}
 """)!;
 characters.ControllerContext = Context(player);
 var retainedSkill = editedCharacter.Skills.Single(s => s.Skill == SkillType.Arcana);
+var beforeInvalidSave = JsonSerializer.Serialize(CharacterMapping.ToResponse(editedCharacter));
+Check(await UpdateCharacterCurrent(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 11,
+    Attacks = [new CharacterAttackDto { Name = "Replacement" }], Skills = [] }) is BadRequestObjectResult &&
+    JsonSerializer.Serialize(CharacterMapping.ToResponse(editedCharacter)) == beforeInvalidSave,
+    "Invalid character update preserves sheet, collections and edit version");
 retainedSkill.IsProficient = true;
 retainedSkill.IsExpertise = true;
 retainedSkill.MiscBonus = 4;
@@ -364,22 +415,22 @@ Check(legacyCharacter.Skills.Count == 18 && legacyCharacter.Skills.Single(s => s
     "Reading a partial legacy character exposes editable defaults without modifying stored skills");
 var skillUpdate = hpUpdate with { Skills = [new CharacterSkillDto {
     Skill = SkillType.Stealth, Ability = AbilityType.Dexterity, IsProficient = true, IsExpertise = true, MiscBonus = 2 }] };
-Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, skillUpdate) is NoContentResult &&
+Check(await UpdateCharacterCurrent(first.Id, editedCharacter.Id, skillUpdate) is OkObjectResult &&
     await db.CharacterSkills.CountAsync(s => s.CharacterId == editedCharacter.Id) == 18 &&
     await db.CharacterSkills.AnyAsync(s => s.CharacterId == editedCharacter.Id && s.Skill == SkillType.Stealth &&
         s.Ability == AbilityType.Dexterity && s.IsProficient && s.IsExpertise && s.MiscBonus == 2) &&
     await db.CharacterSkills.AnyAsync(s => s.CharacterId == editedCharacter.Id && s.Skill == SkillType.Arcana &&
         s.IsProficient && s.IsExpertise && s.MiscBonus == 4),
     "Saving a missing legacy skill persists its values, fills gaps and preserves existing skill values");
-Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, skillUpdate) is NoContentResult &&
+Check(await UpdateCharacterCurrent(first.Id, editedCharacter.Id, skillUpdate) is OkObjectResult &&
     await db.CharacterSkills.CountAsync(s => s.CharacterId == editedCharacter.Id) == 18,
     "Repeated skill saves do not create duplicate rows");
-Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with { Skills = null }) is NoContentResult &&
+Check(await UpdateCharacterCurrent(first.Id, editedCharacter.Id, hpUpdate with { Skills = null }) is OkObjectResult &&
     await db.CharacterSkills.AnyAsync(s => s.CharacterId == editedCharacter.Id && s.Skill == SkillType.Stealth && s.MiscBonus == 2),
     "Updates with omitted skills preserve existing skill values");
-Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with {
+Check(await UpdateCharacterCurrent(first.Id, editedCharacter.Id, hpUpdate with {
     Skills = [skillUpdate.Skills![0], skillUpdate.Skills[0]] }) is BadRequestObjectResult &&
-    await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with {
+    await UpdateCharacterCurrent(first.Id, editedCharacter.Id, hpUpdate with {
         Skills = [new CharacterSkillDto { Skill = (SkillType)999, Ability = AbilityType.Wisdom }] }) is BadRequestObjectResult,
     "Duplicate and undefined skills are rejected before changing the character");
 var emptySkillsCharacter = await db.Characters.Include(c => c.Skills)
@@ -389,34 +440,34 @@ await db.SaveChangesAsync();
 var emptySkillsResponse = (CharacterResponseDto)((OkObjectResult)await characters.GetCharacter(second.Id, emptySkillsCharacter.Id)).Value!;
 Check(emptySkillsResponse.Skills.Count == 18 &&
     await db.CharacterSkills.CountAsync(s => s.CharacterId == emptySkillsCharacter.Id) == 0 &&
-    await characters.UpdateCharacter(second.Id, emptySkillsCharacter.Id, skillUpdate) is NoContentResult &&
+    await UpdateCharacterCurrent(second.Id, emptySkillsCharacter.Id, skillUpdate) is OkObjectResult &&
     await db.CharacterSkills.CountAsync(s => s.CharacterId == emptySkillsCharacter.Id) == 18 &&
     await db.CharacterSkills.AnyAsync(s => s.CharacterId == emptySkillsCharacter.Id && s.Skill == SkillType.Stealth &&
         s.IsProficient && s.IsExpertise && s.MiscBonus == 2),
     "A legacy character with zero stored skills can display and persist its first skill edits");
 Check(await characters.GetCharacter(first.Id, editedCharacter.Id) is OkObjectResult,
     "Active player can read their own character");
-Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate) is NoContentResult && editedCharacter.HitPointCurrent == 7,
+Check(await UpdateCharacterCurrent(first.Id, editedCharacter.Id, hpUpdate) is OkObjectResult && editedCharacter.HitPointCurrent == 7,
     "Player can save their own character HP");
 var promotedCharacterOwner = Context(player);
 ((ClaimsIdentity)promotedCharacterOwner.HttpContext.User.Identity!).AddClaim(new Claim(ClaimTypes.Role, Roles.DM));
 ((ClaimsIdentity)promotedCharacterOwner.HttpContext.User.Identity!).AddClaim(new Claim(ClaimTypes.Role, Roles.Admin));
 characters.ControllerContext = promotedCharacterOwner;
-Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 6 }) is NoContentResult && editedCharacter.HitPointCurrent == 6,
+Check(await UpdateCharacterCurrent(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 6 }) is OkObjectResult && editedCharacter.HitPointCurrent == 6,
     "DM/admin can save their own character in another DM's campaign");
 characters.ControllerContext = Context(dm);
 Check(await characters.GetCharacter(first.Id, editedCharacter.Id) is OkObjectResult,
     "Campaign DM can read a player's character");
-Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 5 }) is NoContentResult && editedCharacter.HitPointCurrent == 5,
+Check(await UpdateCharacterCurrent(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 5 }) is OkObjectResult && editedCharacter.HitPointCurrent == 5,
     "Campaign DM can save a player's character HP");
 characters.ControllerContext = Context(other);
-Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate) is ForbidResult && editedCharacter.HitPointCurrent == 5,
+Check(await UpdateCharacterCurrent(first.Id, editedCharacter.Id, hpUpdate) is ForbidResult && editedCharacter.HitPointCurrent == 5,
     "Another player cannot edit the character");
 ((ClaimsIdentity)characters.User.Identity!).AddClaim(new Claim(ClaimTypes.Role, Roles.DM));
 ((ClaimsIdentity)characters.User.Identity!).AddClaim(new Claim(ClaimTypes.Role, Roles.Admin));
-Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate) is ForbidResult && editedCharacter.HitPointCurrent == 5,
+Check(await UpdateCharacterCurrent(first.Id, editedCharacter.Id, hpUpdate) is ForbidResult && editedCharacter.HitPointCurrent == 5,
     "Unrelated DM/admin cannot edit the character");
-Check(await characters.UpdateCharacter(second.Id, editedCharacter.Id, hpUpdate) is NotFoundResult,
+Check(await UpdateCharacterCurrent(second.Id, editedCharacter.Id, hpUpdate) is NotFoundResult,
     "Character editing rejects a mismatched campaign route");
 var aiConversation = new AIConversation { Id = Guid.NewGuid(), UserId = player.Id, CampaignId = first.Id };
 db.AIConversations.Add(aiConversation);
@@ -500,23 +551,32 @@ Check((await chat.GetConversation(legacyGeneral.Id, CancellationToken.None)).Res
     "General chats are unavailable to DMs too");
 chat.ControllerContext = chatContext;
 
-// Real database, indexing and retrieval; fake provider responses avoid cost and nondeterministic network calls.
-var sessions = new CampaignSessionNotesController(db, knowledge) { ControllerContext = Context(dm) };
+// Retrieval/authorization fixtures stay in the rollback transaction. Real indexing is
+// exercised on separate committed connections in SessionIndexingChecks.
+var noteStorage = new CampaignKnowledgeService(db, new UnavailableIndexEmbeddings(), configuration, NullLogger<CampaignKnowledgeService>.Instance);
+var sessions = new CampaignSessionNotesController(db, noteStorage) { ControllerContext = Context(dm) };
+async Task SeedNoteIndex(long id)
+{
+    var note = await db.CampaignSessionNotes.SingleAsync(n => n.Id == id);
+    var chunks = KnowledgeText.Chunk(note.Content);
+    db.CampaignKnowledgeChunks.AddRange(chunks.Select((content, position) => new CampaignKnowledgeChunk {
+        SessionNoteId = id, Position = position, Content = content, Embedding = FakeEmbeddings.VectorFor(content) }));
+    note.IndexStatus = "ready"; note.EmbeddingModel = fakeEmbeddings.Model;
+    note.EmbeddingDimensions = fakeEmbeddings.Dimensions; note.EmbeddingInputTokens = chunks.Count * 5;
+    await db.SaveChangesAsync();
+}
 var sessionRequest = new CreateSessionNoteRequest(1, "The silver key", "Freya found a silver key beneath the ruined tower.", new DateOnly(2026, 10, 4));
-fakeEmbeddings.Fail = true;
-var failedIndex = await sessions.Create(first.Id, sessionRequest, CancellationToken.None) as OkObjectResult;
-Check(failedIndex?.Value is SessionNoteDto { IndexStatus: "failed", ChunkCount: 0 }, "Provider failure preserves the original session notes with retry status");
-var firstNoteId = ((SessionNoteDto)failedIndex!.Value!).Id;
+var pendingIndex = await sessions.Create(first.Id, sessionRequest, CancellationToken.None) as OkObjectResult;
+Check(pendingIndex?.Value is SessionNoteDto { IndexStatus: "pending", ChunkCount: 0 }, "Unavailable AI preserves original notes for later indexing");
+var firstNoteId = ((SessionNoteDto)pendingIndex!.Value!).Id;
 Check((await sessions.List(first.Id, CancellationToken.None) as OkObjectResult)?.Value is List<SessionNoteDto> saved &&
-    saved.Any(n => n.Id == firstNoteId && n.Content == sessionRequest.Content), "Saved notes remain readable after indexing fails");
-fakeEmbeddings.Fail = false;
-Check(await sessions.RetryIndex(first.Id, firstNoteId, CancellationToken.None) is OkObjectResult { Value: SessionNoteDto { IndexStatus: "ready", ChunkCount: 1 } },
-    "Retry creates a searchable index");
-await sessions.RetryIndex(first.Id, firstNoteId, CancellationToken.None);
-Check(await db.CampaignKnowledgeChunks.CountAsync(x => x.SessionNoteId == firstNoteId) == 1, "Repeated indexing replaces chunks without duplicates");
+    saved.Any(n => n.Id == firstNoteId && n.Content == sessionRequest.Content), "Pending source notes remain readable");
+await SeedNoteIndex(firstNoteId);
 var unrelated = await sessions.Create(second.Id, new CreateSessionNoteRequest(1, "Secret other campaign", "A silver key opened the hidden dragon vault.", new DateOnly(2026, 10, 4)), CancellationToken.None);
 var unrelatedId = ((SessionNoteDto)((OkObjectResult)unrelated).Value!).Id;
-await sessions.Create(first.Id, new CreateSessionNoteRequest(2, "The orchard", "The villagers harvested apples.", new DateOnly(2026, 10, 4)), CancellationToken.None);
+await SeedNoteIndex(unrelatedId);
+var orchard = (OkObjectResult)await sessions.Create(first.Id, new CreateSessionNoteRequest(2, "The orchard", "The villagers harvested apples.", new DateOnly(2026, 10, 4)), CancellationToken.None);
+await SeedNoteIndex(((SessionNoteDto)orchard.Value!).Id);
 sessions.ControllerContext = Context(player);
 Check(await sessions.Create(first.Id, sessionRequest, CancellationToken.None) is NotFoundResult, "Players cannot write notes or pay for indexing");
 Check(await sessions.RetryIndex(first.Id, firstNoteId, CancellationToken.None) is NotFoundResult, "Players cannot reindex DM notes");
@@ -578,7 +638,7 @@ Check(await characters.GetCharacter(first.Id, editedCharacter.Id) is ForbidResul
 Check(await characters.GetCharactersByCampaign(first.Id) is ForbidResult,
     "Removed player cannot list their former campaign's characters");
 var retainedHitPoints = editedCharacter.HitPointCurrent;
-Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 0 }) is ForbidResult &&
+Check(await UpdateCharacterCurrent(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 0 }) is ForbidResult &&
     editedCharacter.HitPointCurrent == retainedHitPoints,
     "Removed player cannot modify their retained character");
 campaigns.ControllerContext = Context(player);
@@ -587,11 +647,11 @@ Check(await campaigns.DeleteCharacter(first.Id, editedCharacter.Id) is ForbidRes
     "Removed player cannot delete their retained character");
 characters.ControllerContext = promotedCharacterOwner;
 Check(await characters.GetCharacter(first.Id, editedCharacter.Id) is ForbidResult &&
-    await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate) is ForbidResult,
+    await UpdateCharacterCurrent(first.Id, editedCharacter.Id, hpUpdate) is ForbidResult,
     "Global DM/admin roles do not restore character access after membership removal");
 characters.ControllerContext = Context(dm);
 Check(await characters.GetCharacter(first.Id, editedCharacter.Id) is OkObjectResult &&
-    await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 5 }) is NoContentResult,
+    await UpdateCharacterCurrent(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 5 }) is OkObjectResult,
     "Campaign DM retains character access after its player is removed");
 Check((await chat.GetConversation(scoped.Id, CancellationToken.None)).Result is NotFoundResult, "Revoked membership prevents reading campaign conversations");
 sseOutput.SetLength(0);
@@ -632,16 +692,10 @@ var transcript = ((SessionTranscriptDto)transcriptionResult!.Value!).Text;
 var approvedAudioNote = await sessions.Create(first.Id, new CreateSessionNoteRequest(3, "Recorded session", transcript, new DateOnly(2026, 10, 4)), CancellationToken.None)
     as OkObjectResult;
 var approvedId = ((SessionNoteDto)approvedAudioNote!.Value!).Id;
+await SeedNoteIndex(approvedId);
 var audioContext = await knowledge.BuildContextAsync(first.Id, dm.Id, "silver key", CancellationToken.None);
 Check(audioContext.Sources.Any(s => s.SessionNoteId == approvedId && s.Excerpt.Contains("recorded session")),
     "Approved audio transcripts flow through the existing session index and RAG retrieval");
-fakeEmbeddings.BatchSizes.Clear();
-var longAudioNote = await sessions.Create(first.Id, new CreateSessionNoteRequest(4, "Long recording", new string('a', 35000), new DateOnly(2026, 10, 4)), CancellationToken.None)
-    as OkObjectResult;
-Check(longAudioNote?.Value is SessionNoteDto { IndexStatus: "ready", ChunkCount: > 32 } longNote &&
-    fakeEmbeddings.BatchSizes.Count > 1 && fakeEmbeddings.BatchSizes.All(size => size <= 32) &&
-    longNote.EmbeddingInputTokens == longNote.ChunkCount * 5,
-    "Long transcripts index in bounded batches and retain total embedding usage");
 Check(KnowledgeText.Cosine([1, 0], [1, 0]) == 1 && KnowledgeText.Cosine([1, 0], [0, 1]) == 0 &&
     KnowledgeText.Cosine([float.NaN], [1]) == -1 && KnowledgeText.Cosine([0], [0]) == -1,
     "Cosine scoring handles matching, unrelated and invalid vectors");
@@ -717,7 +771,7 @@ var tokenValidator = new CurrentTokenValidator(db);
 var oldDmPrincipal = TokenPrincipal(other);
 Check(await tokenValidator.IsCurrentAsync(oldDmPrincipal, CancellationToken.None) && TokenPrincipal(admin).IsInRole(Roles.Admin) &&
     TokenPrincipal(admin).IsInRole(Roles.DM), "Real JWTs carry current token versions and admins retain both DM and Admin claims");
-db.RefreshTokens.Add(new RefreshToken { UserId = other.Id, Token = Guid.NewGuid().ToString(), ExpiresAt = DateTime.UtcNow.AddDays(1) });
+db.RefreshTokens.Add(RefreshTokenService.Create(other.Id, out _));
 await db.SaveChangesAsync();
 await management.RemoveAsync(admin.Id, other.Id, 1, CancellationToken.None);
 Check(other.Role == Roles.Player && !other.IsAdmin && other.PasswordHash == hashBeforePromotion &&
@@ -941,6 +995,8 @@ sealed class FakeAIService : IAIService
 
 sealed class FakeEmbeddings : IEmbeddingService
 {
+    public static float[] VectorFor(string text) => text.Contains("silver key", StringComparison.OrdinalIgnoreCase) ? [1, 0, 0]
+        : text.Contains("apple", StringComparison.OrdinalIgnoreCase) ? [0, 1, 0] : [0, 0, 1];
     public List<int> BatchSizes { get; } = [];
     public string Model => "test-embedding";
     public int Dimensions => 3;
@@ -949,8 +1005,7 @@ sealed class FakeEmbeddings : IEmbeddingService
     {
         BatchSizes.Add(inputs.Count);
         if (Fail) throw new InvalidOperationException("Provider stack diagnostics must never reach the interface.");
-        var vectors = inputs.Select(text => text.Contains("silver key", StringComparison.OrdinalIgnoreCase) ? new float[] { 1, 0, 0 }
-            : text.Contains("apple", StringComparison.OrdinalIgnoreCase) ? new float[] { 0, 1, 0 } : new float[] { 0, 0, 1 }).ToArray();
+        var vectors = inputs.Select(VectorFor).ToArray();
         return Task.FromResult(new EmbeddingBatch(vectors, 5 * inputs.Count));
     }
 }
@@ -978,4 +1033,12 @@ sealed class SqlRecorder(List<string> commands) : DbCommandInterceptor
         commands.Add(command.CommandText);
         return ValueTask.FromResult(result);
     }
+}
+
+sealed class UnavailableIndexEmbeddings : IEmbeddingService
+{
+    public bool IsAvailable => false;
+    public string Model => "test-embedding";
+    public int Dimensions => 3;
+    public Task<EmbeddingBatch> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken ct) => throw new InvalidOperationException("Indexing is tested separately.");
 }
