@@ -2,7 +2,7 @@
 
 Each campaign owns a catalog. The campaign owner with the DM role can create,
 read, update, and delete catalog items and assign them to characters in that campaign.
-Campaign members can read the catalog. A character's player can read their own
+Campaign members can read the catalog. A character's player, while still a campaign member, can read their own
 inventory; the campaign DM can read all of its character inventories.
 
 Use **Items** on the dashboard campaign card to manage the catalog. A saved
@@ -19,13 +19,12 @@ then explicitly confirm deletion of the entire campaign catalog and every
 character's inventory entries in that campaign. This runs atomically. A stale
 count preview is rejected; other campaigns are unaffected.
 
-Player removal and transfers are deferred. No inventory delete, update, or
-transfer endpoint is exposed in this stage. Equipment does not automatically
+Removing individual possessions and transferring them are deferred. No per-entry inventory delete, update, or transfer endpoint is exposed. Campaign membership removal is implemented separately and revokes the former member’s inventory access; the campaign DM retains access. Equipment does not automatically
 change AC, attacks, encumbrance, or currency.
 
 ## Database
 
-Migration: `CampaignItemsAndInventory`. Adds `CampaignItems` and `CharacterItems`
+PostgreSQL/Npgsql stores the catalog and inventory. The committed migration is `CampaignItemsAndInventory`. Adds `CampaignItems` and `CharacterItems`
 and composite keys that prevent an inventory entry from referencing a character
 or catalog item in another campaign. Existing campaigns and characters are kept.
 The API's existing startup migration behavior applies the migration;
@@ -80,3 +79,9 @@ Official source: https://www.dndbeyond.com/attachments/39j2li89/SRD5.1-CCBY4.0Li
 
 Prices/weights cross-checked against the official 2014 5e equipment tables:
 https://www.dndbeyond.com/sources/dnd/basic-rules-2014/equipment
+
+## AI integration and verification
+
+Inventory is available through the application UI/API and the read-only `GetCharacterInventory` tool in campaign chat and MCP. It reads live assignments, quantities and notes; repeated assignments remain separate entries. Access requires current campaign membership and either character ownership or campaign ownership with the DM role. At most 100 entries within a 16,000-character serialized item-list budget are returned, with an `omittedEntries` count. Inventory is not embedded or added to the general shared character context.
+
+`ItemsController`, `ItemService`, `ItemDTOs.cs`, `CampaignItem` and `CharacterItem` define the backend flow. `Items.tsx`, `CharacterInventory.tsx` and `itemApi.ts` provide the frontend flow. `tests/CampaignMembershipChecks` verifies catalog/assignment permissions, campaign isolation, deletion races and SRD import behavior with rolled-back database fixtures. In `DnDCampaignManager.web`, run `node --test tests/characterInventory.test.cjs tests/itemBulkDeletion.test.cjs` for frontend inventory checks.

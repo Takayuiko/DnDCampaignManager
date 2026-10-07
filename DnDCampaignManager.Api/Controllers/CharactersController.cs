@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using DnDCampaignManager.Api.Services;
 
 namespace DnDCampaignManager.Api.Controllers
 {
@@ -35,11 +36,11 @@ namespace DnDCampaignManager.Api.Controllers
             if (campaign == null)
                 return NotFound("Campaign not found");
 
-            var isOwner = campaign.OwnerId == userId;
-            var isPlayer = campaign.Players.Any(p => p.UserId == userId);
-
-            if (!isOwner && !isPlayer)
+            if (!CampaignAuthorization.CanAccess(campaign, userId))
                 return Forbid();
+
+            var validationError = CharacterValidation.Errors(create).FirstOrDefault();
+            if (validationError is not null) return BadRequest(validationError.ErrorMessage);
 
             if (await _dnDxDbContext.Characters.AnyAsync(x => x.CampaignId == campaignId && x.UserId == userId))
                 return BadRequest("You already have a character in this campaign.");
@@ -47,136 +48,14 @@ namespace DnDCampaignManager.Api.Controllers
             if (await _dnDxDbContext.Characters.CountAsync(x => x.CampaignId == campaignId) >= 6)
                 return Conflict("This campaign already has the maximum of 6 characters.");
 
-            var character = new Character
-            {
-                Name = create.Name,
-                Class = create.Class,
-                Race = create.Race,
-                Level = create.Level,
-                Background = create.Background,
-                Alignment = create.Alignment,
-                ExperiencePoints = create.ExperiencePoints,
-                Strength = create.Strength,
-                Dexterity = create.Dexterity,
-                Constitution = create.Constitution,
-                Intelligence = create.Intelligence,
-                Wisdom = create.Wisdom,
-                Charisma = create.Charisma,
-                CampaignId = campaignId,
-                UserId = userId,
-                Campaign = campaign,
-                ProficiencyBonus = create.ProficiencyBonus,
-                ArmorClass = create.ArmorClass,
-                Initiative = create.Initiative,
-                Speed = create.Speed,
-                HitPointMax = create.HitPointMax,
-                HitPointCurrent = create.HitPointCurrent,
-                HitPointTemporary = create.HitPointTemporary,
-                Inspiration = create.Inspiration,
-            };
-
-            if (create.HitDice is not null)
-            {
-                character.HitDiceDie = create.HitDice.Die;
-                character.HitDiceTotal = create.HitDice.Total;
-                character.HitDiceRemaining = create.HitDice.Remaining;
-            }
-
-            if (create.Attacks is not null)
-            {
-                character.Attacks = create.Attacks
-                    .Where(a => !string.IsNullOrWhiteSpace(a.Name))
-                    .Select(a => new CharacterAttack
-                    {
-                        Name = a.Name,
-                        AttackBonus = a.AttackBonus,
-                        Damage = a.Damage
-                    })
-                    .ToList();
-            }
-
-            if (create.Skills != null && create.Skills.Count > 0)
-            {
-                foreach (var incoming in create.Skills)
-                {
-                    character.Skills.Add(new CharacterSkill
-                    {
-                        Skill = incoming.Skill,
-                        Ability = incoming.Ability,
-                        IsProficient = incoming.IsProficient,
-                        IsExpertise = incoming.IsExpertise,
-                        MiscBonus = incoming.MiscBonus
-                    });
-                }
-            }
-
-            var st = create.SavingThrows ?? new SavingThrowsDto();
-
-            character.SaveStrProficient = st.Strength.IsProficient;
-            character.SaveStrMiscBonus = st.Strength.MiscBonus;
-
-            character.SaveDexProficient = st.Dexterity.IsProficient;
-            character.SaveDexMiscBonus = st.Dexterity.MiscBonus;
-
-            character.SaveConProficient = st.Constitution.IsProficient;
-            character.SaveConMiscBonus = st.Constitution.MiscBonus;
-
-            character.SaveIntProficient = st.Intelligence.IsProficient;
-            character.SaveIntMiscBonus = st.Intelligence.MiscBonus;
-
-            character.SaveWisProficient = st.Wisdom.IsProficient;
-            character.SaveWisMiscBonus = st.Wisdom.MiscBonus;
-
-            character.SaveChaProficient = st.Charisma.IsProficient;
-            character.SaveChaMiscBonus = st.Charisma.MiscBonus;
+            var character = new Character { CampaignId = campaignId, UserId = userId, Campaign = campaign };
+            CharacterMapping.Apply(character, create, creating: true);
 
             _dnDxDbContext.Characters.Add(character);
             await _dnDxDbContext.SaveChangesAsync();
             if (transaction is not null) await transaction.CommitAsync();
 
-            return Ok(new CharacterResponseDto
-            {
-                Id = character.Id,
-                UserId = character.UserId,
-                Name = character.Name,
-                Class = character.Class,
-                Race = character.Race,
-                Level = character.Level,
-                Background = character.Background,
-                Alignment = character.Alignment,
-                ExperiencePoints = character.ExperiencePoints,
-                Strength = character.Strength,
-                Dexterity = character.Dexterity,
-                Constitution = character.Constitution,
-                Intelligence = character.Intelligence,
-                Wisdom = character.Wisdom,
-                Charisma = character.Charisma,
-                ProficiencyBonus = character.ProficiencyBonus,
-                ArmorClass = character.ArmorClass,
-                Initiative = character.Initiative,
-                Speed = character.Speed,
-                HitPointMax = character.HitPointMax,
-                HitPointCurrent = character.HitPointCurrent,
-                HitPointTemporary = character.HitPointTemporary,
-                Inspiration = character.Inspiration,
-                HitDice = new HitDiceDto(character.HitDiceDie ?? string.Empty, character.HitDiceTotal ?? 0, character.HitDiceRemaining ?? 0),
-                Attacks = character.Attacks.Select(a => new CharacterAttackDto
-                {
-                    Id = a.Id,
-                    Name = a.Name,
-                    AttackBonus = a.AttackBonus,
-                    Damage = a.Damage
-                }).ToList(),
-                Skills = character.Skills.OrderBy(s => s.Skill)
-                    .Select(s => new CharacterSkillDto
-                    {
-                        Skill = s.Skill,
-                        Ability = s.Ability,
-                        IsProficient = s.IsProficient,
-                        IsExpertise = s.IsExpertise,
-                        MiscBonus = s.MiscBonus
-                    }).ToList()
-            });
+            return Ok(CharacterMapping.ToResponse(character));
         }
 
         [HttpPut("{characterId}")]
@@ -185,8 +64,11 @@ namespace DnDCampaignManager.Api.Controllers
         {
             var userId = GetUserId();
             var isDM = User.IsInRole("DM");
+            await using var transaction = _dnDxDbContext.Database.CurrentTransaction is null
+                ? await _dnDxDbContext.Database.BeginTransactionAsync() : null;
 
             var character = await _dnDxDbContext.Characters
+                .FromSqlInterpolated($"SELECT * FROM \"Characters\" WHERE \"Id\" = {characterId} AND \"CampaignId\" = {campaignId} FOR UPDATE")
                 .Include(c => c.Campaign)
                 .Include(c => c.Skills)
                 .Include(c => c.Attacks)
@@ -197,89 +79,19 @@ namespace DnDCampaignManager.Api.Controllers
             if (character == null)
                 return NotFound();
 
-            var canEdit = (isDM && character.Campaign.OwnerId == userId) || character.UserId == userId;
+            var canEdit = await CampaignAuthorization.CanUseCharacterAsync(_dnDxDbContext, character, userId, isDM);
             
             if (!canEdit)
                 return Forbid();
 
-            character.Name = update.Name;
-            character.Class = update.Class;
-            character.Race = update.Race;
-            character.Level = update.Level;
-            character.Background = update.Background;
-            character.Alignment = update.Alignment;
-            character.ExperiencePoints = update.ExperiencePoints;
-            character.Strength = update.Strength;
-            character.Dexterity = update.Dexterity;
-            character.Constitution = update.Constitution;
-            character.Intelligence = update.Intelligence;
-            character.Wisdom = update.Wisdom;
-            character.Charisma = update.Charisma;
-            character.ProficiencyBonus = update.ProficiencyBonus;
-            character.ArmorClass = update.ArmorClass;
-            character.Initiative = update.Initiative;
-            character.Speed = update.Speed;
-            character.HitPointMax = update.HitPointMax;
-            character.HitPointCurrent = update.HitPointCurrent;
-            character.HitPointTemporary = update.HitPointTemporary;
-            character.Inspiration = update.Inspiration;
+            var validationError = CharacterValidation.Errors(update).FirstOrDefault();
+            if (validationError is not null) return BadRequest(validationError.ErrorMessage);
 
-            if (update.HitDice is not null)
-            {
-                character.HitDiceDie = update.HitDice.Die;
-                character.HitDiceTotal = update.HitDice.Total;
-                character.HitDiceRemaining = update.HitDice.Remaining;
-            }
-
-            if (update.Attacks != null)
-            {
-                character.Attacks.Clear();
-                foreach (var a in update.Attacks)
-                {
-                    character.Attacks.Add(new CharacterAttack
-                    {
-                        Name = a.Name,
-                        AttackBonus = a.AttackBonus,
-                        Damage = a.Damage
-                    });
-                }
-            }
-
-            if (update.Skills != null && update.Skills.Count > 0)
-            {
-                foreach (var incoming in update.Skills)
-                {
-                    var existing = character.Skills.SingleOrDefault(s => s.Skill == incoming.Skill);
-                    if (existing == null) continue;
-
-                    existing.IsProficient = incoming.IsProficient;
-                    existing.IsExpertise = incoming.IsExpertise;
-                    existing.MiscBonus = incoming.MiscBonus;
-                }
-            }
-
-            var st = update.SavingThrows ?? new SavingThrowsDto();
-
-            character.SaveStrProficient = st.Strength.IsProficient;
-            character.SaveStrMiscBonus = st.Strength.MiscBonus;
-
-            character.SaveDexProficient = st.Dexterity.IsProficient;
-            character.SaveDexMiscBonus = st.Dexterity.MiscBonus;
-
-            character.SaveConProficient = st.Constitution.IsProficient;
-            character.SaveConMiscBonus = st.Constitution.MiscBonus;
-
-            character.SaveIntProficient = st.Intelligence.IsProficient;
-            character.SaveIntMiscBonus = st.Intelligence.MiscBonus;
-
-            character.SaveWisProficient = st.Wisdom.IsProficient;
-            character.SaveWisMiscBonus = st.Wisdom.MiscBonus;
-
-            character.SaveChaProficient = st.Charisma.IsProficient;
-            character.SaveChaMiscBonus = st.Charisma.MiscBonus;
+            CharacterMapping.Apply(character, update);
 
             await _dnDxDbContext.SaveChangesAsync();
 
+            if (transaction is not null) await transaction.CommitAsync();
             return NoContent();
         }
 
@@ -288,26 +100,21 @@ namespace DnDCampaignManager.Api.Controllers
         {
             var userId = GetUserId();
 
-            var campaign = await _dnDxDbContext.Campaigns
-                .Include(c => c.Players)
-                .SingleOrDefaultAsync(c => c.Id == campaignId);
+            var campaign = await CampaignAuthorization.GetAccessAsync(_dnDxDbContext, campaignId, userId);
 
             if (campaign == null)
                 return NotFound();
 
             var isDM = campaign.OwnerId == userId;
-            var isPlayer = campaign.Players.Any(p => p.UserId == userId);
 
-            if (!isDM && !isPlayer)
+            if (!campaign.CanAccess(userId))
                 return Forbid();
 
             var characters = await _dnDxDbContext.Characters
-                .Where(c => c.CampaignId == campaignId).ToListAsync();
-
-            if (!isDM)
-            {
-                characters = characters.Where(c => c.UserId == userId).ToList();
-            }
+                .Where(c => c.CampaignId == campaignId && (isDM || c.UserId == userId))
+                .OrderBy(c => c.Id)
+                .Select(CharacterMapping.ListItem)
+                .ToListAsync();
 
             return Ok(characters);
         }
@@ -330,63 +137,12 @@ namespace DnDCampaignManager.Api.Controllers
             if (character == null)
                 return NotFound();
 
-            var canView = (isDM && character.Campaign.OwnerId == userId) || character.UserId == userId;
+            var canView = await CampaignAuthorization.CanUseCharacterAsync(_dnDxDbContext, character, userId, isDM);
 
             if (!canView)
                 return Forbid();
 
-            return Ok(new CharacterResponseDto
-            {
-                Id = character.Id,
-                UserId = character.UserId,
-                Name = character.Name,
-                Class = character.Class,
-                Race = character.Race,
-                Level = character.Level,
-                Background = character.Background,
-                Alignment = character.Alignment,
-                ExperiencePoints = character.ExperiencePoints,
-                Strength = character.Strength,
-                Dexterity = character.Dexterity,
-                Constitution = character.Constitution,
-                Intelligence = character.Intelligence,
-                Wisdom = character.Wisdom,
-                Charisma = character.Charisma,
-                ProficiencyBonus = character.ProficiencyBonus,
-                ArmorClass = character.ArmorClass,
-                Initiative = character.Initiative,
-                Speed = character.Speed,
-                HitPointMax = character.HitPointMax,
-                HitPointCurrent = character.HitPointCurrent,
-                HitPointTemporary = character.HitPointTemporary,
-                Inspiration = character.Inspiration,
-                HitDice = new HitDiceDto(character.HitDiceDie ?? string.Empty, character.HitDiceTotal ?? 0, character.HitDiceRemaining ?? 0),
-                SavingThrows = new SavingThrowsDto
-                {
-                    Strength = new SavingThrowDto { IsProficient = character.SaveStrProficient, MiscBonus = character.SaveStrMiscBonus },
-                    Dexterity = new SavingThrowDto { IsProficient = character.SaveDexProficient, MiscBonus = character.SaveDexMiscBonus },
-                    Constitution = new SavingThrowDto { IsProficient = character.SaveConProficient, MiscBonus = character.SaveConMiscBonus },
-                    Intelligence = new SavingThrowDto { IsProficient = character.SaveIntProficient, MiscBonus = character.SaveIntMiscBonus },
-                    Wisdom = new SavingThrowDto { IsProficient = character.SaveWisProficient, MiscBonus = character.SaveWisMiscBonus },
-                    Charisma = new SavingThrowDto { IsProficient = character.SaveChaProficient, MiscBonus = character.SaveChaMiscBonus },
-                },
-                Attacks = character.Attacks.Select(a => new CharacterAttackDto
-                {
-                    Id = a.Id,
-                    Name = a.Name,
-                    AttackBonus = a.AttackBonus,
-                    Damage = a.Damage
-                }).ToList(),
-                Skills = character.Skills.OrderBy(s => s.Skill)
-                    .Select(s => new CharacterSkillDto
-                    {
-                        Skill = s.Skill,
-                        Ability = s.Ability,
-                        IsProficient = s.IsProficient,
-                        IsExpertise = s.IsExpertise,
-                        MiscBonus = s.MiscBonus
-                    }).ToList()
-            });
+            return Ok(CharacterMapping.ToResponse(character));
         }
 
         private int GetUserId()

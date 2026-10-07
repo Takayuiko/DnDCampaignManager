@@ -8,8 +8,10 @@ export type CampaignMap = {
 export type MapDraft = Pick<CampaignMap, "title" | "description" | "locations">;
 const path = (campaignId: number) => `/campaigns/${campaignId}/maps`;
 export const getMaps = (campaignId: number) => api.get<CampaignMap[]>(path(campaignId));
-export const getMapImage = (campaignId: number, mapId: number) =>
-    api.get<Blob>(`${path(campaignId)}/${mapId}/image`, { responseType: "blob" });
+export const getMapImage = (campaignId: number, mapId: number, signal?: AbortSignal) =>
+    api.get<Blob>(`${path(campaignId)}/${mapId}/image`, { responseType: "blob", signal });
+export const getMapThumbnail = (campaignId: number, mapId: number, signal?: AbortSignal) =>
+    api.get<Blob>(`${path(campaignId)}/${mapId}/thumbnail`, { responseType: "blob", signal });
 export function saveMap(campaignId: number, mapId: number | null, draft: MapDraft, image: File | null) {
     const form = new FormData();
     form.append("title", draft.title); form.append("description", draft.description);

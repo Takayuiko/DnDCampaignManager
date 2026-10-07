@@ -27,6 +27,12 @@ public sealed class CampaignMcpTools
         int campaignId, int characterId, CancellationToken cancellationToken)
         => ExecuteAsync(tools, user, campaignId, "GetCharacter", JsonSerializer.Serialize(new { characterId }), cancellationToken);
 
+    [McpServerTool(Name = "GetCharacterInventory", ReadOnly = true, Destructive = false, OpenWorld = false)]
+    [Description("Read current inventory assignments, quantities and notes. Requires the character's player or campaign DM. Omitted entries are reported.")]
+    public static Task<string> GetCharacterInventory(CampaignToolService tools, ClaimsPrincipal user,
+        int campaignId, int characterId, CancellationToken cancellationToken)
+        => ExecuteAsync(tools, user, campaignId, "GetCharacterInventory", JsonSerializer.Serialize(new { characterId }), cancellationToken);
+
     private static async Task<string> ExecuteAsync(CampaignToolService tools, ClaimsPrincipal user,
         int campaignId, string name, string arguments, CancellationToken ct)
     {

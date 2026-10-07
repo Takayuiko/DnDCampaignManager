@@ -11,13 +11,34 @@ const api = axios.create({
     withCredentials: true,
 });
 
-let isRefreshing = false;
-let refreshQueue: ((token: string) => void)[] = [];
+let refreshPromise: Promise<string> | null = null;
 let loggingOut = false;
 
 export const setLoggingOut = (value: boolean) => {
     loggingOut = value;
 };
+
+// Axios requests and fetch-based streams share the same refresh operation.
+export function refreshAccessToken(): Promise<string> {
+    if (!refreshPromise) {
+        refreshPromise = api.post<{ accessToken: string }>("/auth/refresh")
+            .then(({ data }) => {
+                localStorage.setItem("token", data.accessToken);
+                api.defaults.headers.common.Authorization = `Bearer ${data.accessToken}`;
+                return data.accessToken;
+            })
+            .catch((error: unknown) => {
+                localStorage.removeItem("token");
+                delete api.defaults.headers.common.Authorization;
+                if (!loggingOut) window.location.href = "/login";
+                throw error;
+            })
+            .finally(() => {
+                refreshPromise = null;
+            });
+    }
+    return refreshPromise;
+}
 
 api.interceptors.request.use(config => {
     const token = localStorage.getItem("token");
@@ -44,38 +65,14 @@ api.interceptors.response.use(
             return Promise.reject(error);
         }
 
-        if (error.response?.status === 401 && !original._retry) {
-            if (isRefreshing) {
-                return new Promise(resolve => {
-                    refreshQueue.push(token => {
-                        original.headers.Authorization = `Bearer ${token}`;
-                        resolve(api(original));
-                    });
-                });
-            }
-
+        if (error.response?.status === 401 && original && !original._retry) {
             original._retry = true;
-            isRefreshing = true;
-
             try {
-                const res = await api.post("/auth/refresh");
-                const newToken = res.data.accessToken;
-
-                localStorage.setItem("token", newToken);
-                api.defaults.headers.common.Authorization = `Bearer ${newToken}`;
-
-                refreshQueue.forEach(cb => cb(newToken));
-                refreshQueue = [];
-
+                const newToken = await refreshAccessToken();
+                original.headers.Authorization = `Bearer ${newToken}`;
                 return api(original);
             } catch {
-                localStorage.removeItem("token");
-                delete api.defaults.headers.common.Authorization;
-
-                if (!loggingOut) window.location.href = "/login";
                 return Promise.reject(error);
-            } finally {
-                isRefreshing = false;
             }
         }
 

@@ -1,5 +1,5 @@
 import api from "./axios";
-import { type GetCharacterResponse, type CharacterForm } from "../components/Character/CharacterSheetForm";
+import { type GetCharacterResponse, type CharacterForm, type CharacterOption } from "../components/Character/characterTypes";
 import { toCharacterRequest } from "./characterRequest";
 
 // Campaign
@@ -29,6 +29,12 @@ export function addPlayerToCampaign(campaignId: number, email: string) {
 }
 
 // Character
+export type CharacterListItem = Pick<GetCharacterResponse,
+    "id" | "userId" | "name" | "class" | "race" | "level" | "background" |
+    "alignment" | "experiencePoints" | "strength" | "dexterity" | "constitution" |
+    "intelligence" | "wisdom" | "charisma" | "proficiencyBonus" | "armorClass" |
+    "initiative" | "speed" | "hitPointMax" | "hitPointCurrent" | "hitPointTemporary">;
+
 export const removePlayerFromCampaign = (campaignId: number, playerId: number) =>
     api.delete(`/campaigns/${campaignId}/players/${playerId}`)
 
@@ -39,28 +45,28 @@ export const getCharacter = (campaignId: number, characterId: number) =>
     api.get<GetCharacterResponse>(`/campaigns/${campaignId}/characters/${characterId}`);
 
 export const getCharactersByCampaign = (campaignId: number) =>
-    api.get(`/campaigns/${campaignId}/characters`);
+    api.get<CharacterListItem[]>(`/campaigns/${campaignId}/characters`);
 
 export const updateCharacterByCampaign = ( campaignId: number, characterId: number, data: CharacterForm ) =>
     api.put<void>(`/campaigns/${campaignId}/characters/${characterId}`, toCharacterRequest(data));
 
 // Character Classes
 export const getCharacterClass = (campaignId: number) =>
-    api.get(`/campaigns/${campaignId}/character-classes`);
+    api.get<CharacterOption[]>(`/campaigns/${campaignId}/character-classes`);
 
 export const addCharacterClass = (campaignId: number, data: { name: string; }) =>
-    api.post(`/campaigns/${campaignId}/character-classes`, data);
+    api.post<CharacterOption>(`/campaigns/${campaignId}/character-classes`, data);
 
 // Character Races
 export const getCharacterRaces = (campaignId: number) =>
-    api.get(`/campaigns/${campaignId}/character-races`);
+    api.get<CharacterOption[]>(`/campaigns/${campaignId}/character-races`);
 
 export const addCharacterRace = (campaignId: number, data: { name: string }) =>
-    api.post(`/campaigns/${campaignId}/character-races`, data);
+    api.post<CharacterOption>(`/campaigns/${campaignId}/character-races`, data);
 
 // Character Backgrounds
 export const getCharacterBackgrounds = (campaignId: number) =>
-    api.get(`/campaigns/${campaignId}/character-backgrounds`);
+    api.get<CharacterOption[]>(`/campaigns/${campaignId}/character-backgrounds`);
 
 export const addCharacterBackground = (campaignId: number, data: { name: string }) =>
-    api.post(`/campaigns/${campaignId}/character-backgrounds`, data);
+    api.post<CharacterOption>(`/campaigns/${campaignId}/character-backgrounds`, data);

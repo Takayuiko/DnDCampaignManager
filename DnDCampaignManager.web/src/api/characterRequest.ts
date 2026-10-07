@@ -1,4 +1,4 @@
-import type { CharacterForm, GetCharacterResponse } from "../components/Character/CharacterSheetForm";
+import type { CharacterForm, GetCharacterResponse } from "../components/Character/characterTypes";
 
 // Ownership is determined by the authenticated user and route on the server.
 export type CharacterRequest = Omit<GetCharacterResponse, "id" | "userId">;

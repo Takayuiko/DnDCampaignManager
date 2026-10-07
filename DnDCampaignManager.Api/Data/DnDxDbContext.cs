@@ -81,6 +81,9 @@ namespace DnDCampingManager.Api.Data
             modelBuilder.Entity<User>()
                 .HasIndex(u => u.Email)
                 .IsUnique();
+            modelBuilder.Entity<User>().Property(u => u.NormalizedEmail)
+                .HasComputedColumnSql("lower(btrim(\"Email\"))", stored: true);
+            modelBuilder.Entity<User>().HasIndex(u => u.NormalizedEmail).IsUnique();
 
             modelBuilder.Entity<Campaign>()
                 .HasOne(c => c.Owner)
@@ -155,7 +158,7 @@ namespace DnDCampingManager.Api.Data
 
             modelBuilder.Entity<CharacterClassOption>()
                 .HasOne(x => x.User)
-                .WithMany()
+                .WithMany(u => u.CharacterClassOptions)
                 .HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
 

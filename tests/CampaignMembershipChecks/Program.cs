@@ -26,6 +26,9 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Options;
 using System.IdentityModel.Tokens.Jwt;
 using Microsoft.IdentityModel.Tokens;
+using SkiaSharp;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.Data.Common;
 
 // Exercise MVC validation, which direct controller calls bypass.
 var services = new ServiceCollection();
@@ -82,10 +85,34 @@ var configuration = new ConfigurationBuilder()
     .AddUserSecrets(typeof(DnDxDbContext).Assembly, optional: true)
     .AddEnvironmentVariables()
     .Build();
+var sqlCommands = new List<string>();
 var options = new DbContextOptionsBuilder<DnDxDbContext>()
-    .UseNpgsql(configuration.GetConnectionString("DefaultConnection")).Options;
+    .UseNpgsql(configuration.GetConnectionString("DefaultConnection"))
+    .AddInterceptors(new SqlRecorder(sqlCommands)).Options;
 await using var db = new DnDxDbContext(options);
+var classOptionsBeforeMigration = (await db.Database.GetAppliedMigrationsAsync()).Any()
+    ? await db.CharacterClassOptions.AsNoTracking().OrderBy(c => c.Id)
+        .Select(c => new { c.Id, c.UserId, c.CampaignId, c.Name, c.NormalizedName, c.CreatedAt }).ToListAsync()
+    : [];
 await db.Database.MigrateAsync();
+var classOptionsAfterMigration = await db.CharacterClassOptions.AsNoTracking().OrderBy(c => c.Id)
+    .Select(c => new { c.Id, c.UserId, c.CampaignId, c.Name, c.NormalizedName, c.CreatedAt }).ToListAsync();
+if (!classOptionsBeforeMigration.SequenceEqual(classOptionsAfterMigration))
+    throw new Exception("Relationship migration changed existing class options or their ownership.");
+Console.WriteLine("PASS: Relationship migration preserves existing class options and ownership");
+var classModel = db.Model.FindEntityType(typeof(CharacterClassOption))!;
+var classUserRelationships = classModel.GetForeignKeys().Where(f => f.PrincipalEntityType.ClrType == typeof(User)).ToList();
+if (classUserRelationships.Count != 1 || classUserRelationships[0].Properties.Single().Name != "UserId" ||
+    classUserRelationships[0].PrincipalToDependent?.Name != nameof(User.CharacterClassOptions) ||
+    classModel.FindProperty("UserId1") is not null)
+    throw new Exception("Character class options must have exactly one user relationship through UserId.");
+Console.WriteLine("PASS: Class options use one explicit user relationship without a shadow foreign key");
+if (await db.Database.SqlQueryRaw<int>("""
+    SELECT count(*)::int AS "Value" FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'CharacterClassOptions' AND column_name = 'UserId1'
+    """).SingleAsync() != 0)
+    throw new Exception("Relationship migration did not remove the redundant database column.");
+Console.WriteLine("PASS: The redundant UserId1 column is removed from the database");
 await using var transaction = await db.Database.BeginTransactionAsync();
 // All fixtures and membership/character changes are rolled back, even on failure.
 var suffix = Guid.NewGuid().ToString("N");
@@ -133,11 +160,65 @@ var request = JsonSerializer.Deserialize<CreateCharacterDto>("""
 """)!;
 var characters = new CharactersController(db) { ControllerContext = Context(player) };
 Check(await characters.CreateCharacter(first.Id, request) is OkObjectResult, "Invited player can create a character");
+foreach (var input in new ICharacterWriteDto[] {
+    request with { Skills = [new CharacterSkillDto { Skill = (SkillType)999 }] },
+    request with { Attacks = [null!] },
+    request with { SavingThrows = new SavingThrowsDto { Strength = null! } }
+})
+{
+    var context = new ActionContext(new DefaultHttpContext { RequestServices = provider },
+        new RouteData(), new ActionDescriptor(), new ModelStateDictionary());
+    validator.Validate(context, null, "", input);
+    Check(!context.ModelState.IsValid, "Shared character validation rejects malformed nested input through MVC");
+}
+var mappedCharacter = new Character();
+CharacterMapping.Apply(mappedCharacter, request);
+Check(CharacterMapping.ToResponse(mappedCharacter).SavingThrows is not null && mappedCharacter.Skills.Count == 18,
+    "Shared character mapping includes saving throws and complete skills");
+Check(await db.CharacterSkills.CountAsync(s => s.Character.CampaignId == first.Id && s.Character.UserId == player.Id) == 18,
+    "Creating a character with no supplied skills persists all 18 defaults");
 Check(await characters.CreateCharacter(first.Id, request) is BadRequestObjectResult, "One character per user per campaign is enforced");
-Check(await characters.CreateCharacter(second.Id, request) is OkObjectResult, "Same user can create a different character in another campaign");
+Check(await characters.CreateCharacter(second.Id, request with { Skills = null }) is OkObjectResult, "Same user can create a different character in another campaign");
 characters.ControllerContext = Context(other);
-Check(await characters.CreateCharacter(first.Id, request) is OkObjectResult, "One campaign supports multiple players' characters");
+Check(await characters.CreateCharacter(first.Id, request with { Skills = [new CharacterSkillDto {
+    Skill = SkillType.Arcana, Ability = AbilityType.Intelligence, IsProficient = true, IsExpertise = true, MiscBonus = 3 }] }) is OkObjectResult,
+    "One campaign supports multiple players' characters");
+Check(await db.CharacterSkills.CountAsync(s => s.Character.CampaignId == first.Id && s.Character.UserId == other.Id) == 18 &&
+    await db.CharacterSkills.AnyAsync(s => s.Character.CampaignId == first.Id && s.Character.UserId == other.Id &&
+        s.Skill == SkillType.Arcana && s.IsProficient && s.IsExpertise && s.MiscBonus == 3),
+    "Partial creation skills overlay defaults without losing supplied proficiency, expertise or bonuses");
 var editedCharacter = await db.Characters.SingleAsync(c => c.CampaignId == first.Id && c.UserId == player.Id);
+characters.ControllerContext = Context(dm);
+var characterList = await characters.GetCharactersByCampaign(first.Id) as OkObjectResult;
+Check(characterList?.Value is List<CharacterListItemDto> characterDtos && characterDtos.Count == 2 &&
+    characterDtos.Any(c => c.Id == editedCharacter.Id && c.Name == editedCharacter.Name &&
+        c.UserId == player.Id && c.Strength == editedCharacter.Strength && c.HitPointCurrent == editedCharacter.HitPointCurrent),
+    "Campaign owner receives all characters as list DTOs with identity and sheet values");
+using (var characterJson = JsonDocument.Parse(JsonSerializer.Serialize(characterList!.Value,
+    new JsonSerializerOptions(JsonSerializerDefaults.Web))))
+{
+    var fields = characterJson.RootElement[0].EnumerateObject().Select(p => p.Name).ToHashSet();
+    Check(characterJson.RootElement.GetArrayLength() == 2 && fields.Count == 22 &&
+        fields.Contains("id") && fields.Contains("userId") && fields.Contains("hitPointCurrent") &&
+        !fields.Contains("campaign") && !fields.Contains("user"),
+        "Character list serializes without entity cycles or account/campaign navigation properties");
+}
+characters.ControllerContext = Context(player);
+Check((await characters.GetCharactersByCampaign(first.Id) as OkObjectResult)?.Value is List<CharacterListItemDto> ownCharacters &&
+    ownCharacters.Count == 1 && ownCharacters[0].Id == editedCharacter.Id,
+    "Character list only exposes the active player's own character");
+characters.ControllerContext = Context(other);
+Check(await characters.GetCharactersByCampaign(second.Id) is ForbidResult,
+    "Nonmembers cannot list a campaign's characters");
+Check(await characters.GetCharactersByCampaign(int.MaxValue) is NotFoundResult,
+    "Character list returns not found for a missing campaign");
+characters.ControllerContext = Context(dm);
+var emptyCharacterCampaign = new Campaign { Name = "Empty character list", Description = "Temporary", OwnerId = dm.Id };
+db.Campaigns.Add(emptyCharacterCampaign);
+await db.SaveChangesAsync();
+Check((await characters.GetCharactersByCampaign(emptyCharacterCampaign.Id) as OkObjectResult)?.Value is List<CharacterListItemDto> emptyCharacters &&
+    emptyCharacters.Count == 0, "Authorized empty campaign returns an empty character DTO list");
+characters.ControllerContext = Context(other);
 var itemService = new ItemService(db);
 async Task<bool> ItemRejected(Func<Task> action, int status)
 {
@@ -271,6 +352,50 @@ var hpUpdate = JsonSerializer.Deserialize<UpdateCharacterDto>("""
 {"Name":"Freya","Class":"Fighter","Race":"Human","Level":1,"Background":"Soldier","Alignment":"Neutral","Strength":10,"Dexterity":10,"Constitution":10,"Intelligence":10,"Wisdom":10,"Charisma":10,"ProficiencyBonus":2,"HitPointMax":10,"HitPointCurrent":7,"Skills":[],"SavingThrows":{}}
 """)!;
 characters.ControllerContext = Context(player);
+var retainedSkill = editedCharacter.Skills.Single(s => s.Skill == SkillType.Arcana);
+retainedSkill.IsProficient = true;
+retainedSkill.IsExpertise = true;
+retainedSkill.MiscBonus = 4;
+db.CharacterSkills.RemoveRange(editedCharacter.Skills.Where(s => s.Skill != SkillType.Arcana).ToList());
+await db.SaveChangesAsync();
+var legacyCharacter = (CharacterResponseDto)((OkObjectResult)await characters.GetCharacter(first.Id, editedCharacter.Id)).Value!;
+Check(legacyCharacter.Skills.Count == 18 && legacyCharacter.Skills.Single(s => s.Skill == SkillType.Arcana).MiscBonus == 4 &&
+    await db.CharacterSkills.CountAsync(s => s.CharacterId == editedCharacter.Id) == 1,
+    "Reading a partial legacy character exposes editable defaults without modifying stored skills");
+var skillUpdate = hpUpdate with { Skills = [new CharacterSkillDto {
+    Skill = SkillType.Stealth, Ability = AbilityType.Dexterity, IsProficient = true, IsExpertise = true, MiscBonus = 2 }] };
+Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, skillUpdate) is NoContentResult &&
+    await db.CharacterSkills.CountAsync(s => s.CharacterId == editedCharacter.Id) == 18 &&
+    await db.CharacterSkills.AnyAsync(s => s.CharacterId == editedCharacter.Id && s.Skill == SkillType.Stealth &&
+        s.Ability == AbilityType.Dexterity && s.IsProficient && s.IsExpertise && s.MiscBonus == 2) &&
+    await db.CharacterSkills.AnyAsync(s => s.CharacterId == editedCharacter.Id && s.Skill == SkillType.Arcana &&
+        s.IsProficient && s.IsExpertise && s.MiscBonus == 4),
+    "Saving a missing legacy skill persists its values, fills gaps and preserves existing skill values");
+Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, skillUpdate) is NoContentResult &&
+    await db.CharacterSkills.CountAsync(s => s.CharacterId == editedCharacter.Id) == 18,
+    "Repeated skill saves do not create duplicate rows");
+Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with { Skills = null }) is NoContentResult &&
+    await db.CharacterSkills.AnyAsync(s => s.CharacterId == editedCharacter.Id && s.Skill == SkillType.Stealth && s.MiscBonus == 2),
+    "Updates with omitted skills preserve existing skill values");
+Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with {
+    Skills = [skillUpdate.Skills![0], skillUpdate.Skills[0]] }) is BadRequestObjectResult &&
+    await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with {
+        Skills = [new CharacterSkillDto { Skill = (SkillType)999, Ability = AbilityType.Wisdom }] }) is BadRequestObjectResult,
+    "Duplicate and undefined skills are rejected before changing the character");
+var emptySkillsCharacter = await db.Characters.Include(c => c.Skills)
+    .SingleAsync(c => c.CampaignId == second.Id && c.UserId == player.Id);
+db.CharacterSkills.RemoveRange(emptySkillsCharacter.Skills.ToList());
+await db.SaveChangesAsync();
+var emptySkillsResponse = (CharacterResponseDto)((OkObjectResult)await characters.GetCharacter(second.Id, emptySkillsCharacter.Id)).Value!;
+Check(emptySkillsResponse.Skills.Count == 18 &&
+    await db.CharacterSkills.CountAsync(s => s.CharacterId == emptySkillsCharacter.Id) == 0 &&
+    await characters.UpdateCharacter(second.Id, emptySkillsCharacter.Id, skillUpdate) is NoContentResult &&
+    await db.CharacterSkills.CountAsync(s => s.CharacterId == emptySkillsCharacter.Id) == 18 &&
+    await db.CharacterSkills.AnyAsync(s => s.CharacterId == emptySkillsCharacter.Id && s.Skill == SkillType.Stealth &&
+        s.IsProficient && s.IsExpertise && s.MiscBonus == 2),
+    "A legacy character with zero stored skills can display and persist its first skill edits");
+Check(await characters.GetCharacter(first.Id, editedCharacter.Id) is OkObjectResult,
+    "Active player can read their own character");
 Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate) is NoContentResult && editedCharacter.HitPointCurrent == 7,
     "Player can save their own character HP");
 var promotedCharacterOwner = Context(player);
@@ -280,6 +405,8 @@ characters.ControllerContext = promotedCharacterOwner;
 Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 6 }) is NoContentResult && editedCharacter.HitPointCurrent == 6,
     "DM/admin can save their own character in another DM's campaign");
 characters.ControllerContext = Context(dm);
+Check(await characters.GetCharacter(first.Id, editedCharacter.Id) is OkObjectResult,
+    "Campaign DM can read a player's character");
 Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 5 }) is NoContentResult && editedCharacter.HitPointCurrent == 5,
     "Campaign DM can save a player's character HP");
 characters.ControllerContext = Context(other);
@@ -445,6 +572,27 @@ Check(scopedReply.RetrievalInputTokens == 5 && reloaded?.Value is ConversationDt
 var membership = await db.CampaignPlayer.SingleAsync(x => x.CampaignId == first.Id && x.UserId == player.Id);
 db.CampaignPlayer.Remove(membership);
 await db.SaveChangesAsync();
+characters.ControllerContext = Context(player);
+Check(await characters.GetCharacter(first.Id, editedCharacter.Id) is ForbidResult,
+    "Removed player cannot read their retained character");
+Check(await characters.GetCharactersByCampaign(first.Id) is ForbidResult,
+    "Removed player cannot list their former campaign's characters");
+var retainedHitPoints = editedCharacter.HitPointCurrent;
+Check(await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 0 }) is ForbidResult &&
+    editedCharacter.HitPointCurrent == retainedHitPoints,
+    "Removed player cannot modify their retained character");
+campaigns.ControllerContext = Context(player);
+Check(await campaigns.DeleteCharacter(first.Id, editedCharacter.Id) is ForbidResult &&
+    await db.Characters.AnyAsync(x => x.Id == editedCharacter.Id),
+    "Removed player cannot delete their retained character");
+characters.ControllerContext = promotedCharacterOwner;
+Check(await characters.GetCharacter(first.Id, editedCharacter.Id) is ForbidResult &&
+    await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate) is ForbidResult,
+    "Global DM/admin roles do not restore character access after membership removal");
+characters.ControllerContext = Context(dm);
+Check(await characters.GetCharacter(first.Id, editedCharacter.Id) is OkObjectResult &&
+    await characters.UpdateCharacter(first.Id, editedCharacter.Id, hpUpdate with { HitPointCurrent = 5 }) is NoContentResult,
+    "Campaign DM retains character access after its player is removed");
 Check((await chat.GetConversation(scoped.Id, CancellationToken.None)).Result is NotFoundResult, "Revoked membership prevents reading campaign conversations");
 sseOutput.SetLength(0);
 await chat.StreamMessage(scoped.Id, new SendMessageRequest("silver key"), CancellationToken.None);
@@ -540,6 +688,15 @@ var memberChat = new AIConversation { Id = Guid.NewGuid(), UserId = player.Id, C
 db.AIConversations.AddRange(cleanupGeneral, memberChat);
 db.AIMessages.Add(new AIMessage { ConversationId = memberChat.Id, Role = "assistant", Content = "Campaign secret" });
 await db.SaveChangesAsync();
+Check(await db.Entry(other).Collection(u => u.CharacterClassOptions).Query()
+    .AnyAsync(c => c.CampaignId == dmOwned.Id && c.Name == "Cleanup class" && c.UserId == other.Id),
+    "User class-option navigation reads records owned through UserId");
+var navigationClass = new CharacterClassOption { CampaignId = dmOwned.Id, Name = "Navigation class", NormalizedName = "NAVIGATION CLASS" };
+other.CharacterClassOptions.Add(navigationClass);
+await db.SaveChangesAsync();
+Check(navigationClass.UserId == other.Id && await db.CharacterClassOptions.AsNoTracking()
+    .AnyAsync(c => c.Id == navigationClass.Id && c.UserId == other.Id),
+    "Adding a class through the user collection persists the correct owner");
 sessions.ControllerContext = Context(other);
 var cleanupNote = (SessionNoteDto)((OkObjectResult)await sessions.Create(dmOwned.Id,
     new CreateSessionNoteRequest(1, "Cleanup session", "A silver key", new DateOnly(2026, 10, 4)), CancellationToken.None)).Value!;
@@ -582,9 +739,35 @@ var lateCreation = new CampaignsController(db) { ControllerContext = new Control
 Check((await lateCreation.CreateCampaign(new CreateCampaignDto("Late campaign", "Should not be created", other.Id))).Result is ForbidResult,
     "A request carrying the former DM claim cannot recreate an owned campaign after cleanup");
 // Map CRUD and retrieval use the real PostgreSQL schema, with fake embeddings and rollback fixtures.
-var mapsController = new CampaignMapsController(db, knowledge,
-    new MapKnowledgeService(db, fakeEmbeddings, NullLogger<MapKnowledgeService>.Instance)) { ControllerContext = Context(dm) };
-var png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aBMsAAAAASUVORK5CYII=");
+var mapsController = new CampaignMapsController(db, knowledge) { ControllerContext = Context(dm) };
+using var mapBitmap = new SKBitmap(1200, 600);
+var mapRandom = new Random(42);
+mapBitmap.Pixels = Enumerable.Range(0, 1200 * 600)
+    .Select(_ => new SKColor((byte)mapRandom.Next(256), (byte)mapRandom.Next(256), (byte)mapRandom.Next(256))).ToArray();
+using var testMapImage = SKImage.FromBitmap(mapBitmap);
+using var pngData = testMapImage.Encode(SKEncodedImageFormat.Png, 100);
+var png = pngData.ToArray();
+foreach (var format in new[] { SKEncodedImageFormat.Png, SKEncodedImageFormat.Jpeg, SKEncodedImageFormat.Webp })
+{
+    using var encoded = testMapImage.Encode(format, 85);
+    var previewBytes = MapThumbnail.Create(encoded.ToArray());
+    using var previewBitmap = previewBytes is null ? null : SKBitmap.Decode(previewBytes);
+    Check(previewBytes is { Length: > 0 and <= MapThumbnail.MaxBytes } && previewBitmap is not null &&
+        previewBitmap.Width <= MapThumbnail.MaxDimension && previewBitmap.Height <= MapThumbnail.MaxDimension &&
+        previewBitmap.Width == previewBitmap.Height * 2,
+        $"{format} previews preserve aspect ratio and stay within pixel and byte limits");
+}
+Check(MapThumbnail.Create(Encoding.UTF8.GetBytes("invalid image")) is null,
+    "Invalid images cannot produce previews");
+using (var jpeg = testMapImage.Encode(SKEncodedImageFormat.Jpeg, 85))
+{
+    var bytes = jpeg.ToArray();
+    var orientation = Convert.FromHexString("FFE1002245786966000049492A0008000000010012010300010000000600000000000000");
+    var oriented = bytes.Take(2).Concat(orientation).Concat(bytes.Skip(2)).ToArray();
+    using var preview = SKBitmap.Decode(MapThumbnail.Create(oriented));
+    Check(preview is not null && preview.Height == preview.Width * 2,
+        "JPEG preview dimensions honor EXIF rotation like the original browser image");
+}
 IFormFile MapFile() => new FormFile(new MemoryStream(png), 0, png.Length, "image", "map.png");
 SaveMapRequest MapRequest(string description, bool image = false) => new() {
     Title = "Tower map", Description = description,
@@ -598,6 +781,19 @@ Check(CampaignMapsController.DetectImageType(Encoding.UTF8.GetBytes("<svg onload
     "Unsupported active image formats are rejected");
 fakeEmbeddings.Fail = true;
 var mapCreated = (MapDto)((OkObjectResult)await mapsController.Create(first.Id, MapRequest("A silver key is kept here.", true), CancellationToken.None)).Value!;
+sqlCommands.Clear();
+var thumbnailResult = (FileContentResult)await mapsController.Thumbnail(first.Id, mapCreated.Id, CancellationToken.None);
+Check(thumbnailResult.ContentType == "image/jpeg" && thumbnailResult.FileContents.Length <= MapThumbnail.MaxBytes &&
+    thumbnailResult.FileContents.Length < png.Length / 10 && !sqlCommands.Any(sql => sql.Contains("\"Image\"")),
+    "Stored thumbnail requests return bounded JPEGs without selecting the original image");
+await db.CampaignMaps.Where(m => m.Id == mapCreated.Id).ExecuteUpdateAsync(s => s.SetProperty(m => m.Thumbnail, (byte[]?)null));
+var legacyThumbnail = (FileContentResult)await mapsController.Thumbnail(first.Id, mapCreated.Id, CancellationToken.None);
+Check(legacyThumbnail.FileContents.Length <= MapThumbnail.MaxBytes &&
+    await db.CampaignMaps.AsNoTracking().Where(m => m.Id == mapCreated.Id).Select(m => m.Thumbnail != null).SingleAsync(),
+    "Legacy maps generate and persist their preview on first access");
+sqlCommands.Clear();
+await mapsController.Thumbnail(first.Id, mapCreated.Id, CancellationToken.None);
+Check(!sqlCommands.Any(sql => sql.Contains("\"Image\"")), "Subsequent legacy preview requests reuse the stored thumbnail");
 var duplicateMapRequest = MapRequest("Duplicate", true);
 duplicateMapRequest.Title = "  tower MAP  ";
 Check(await mapsController.Create(first.Id, duplicateMapRequest, CancellationToken.None) is ConflictObjectResult,
@@ -612,21 +808,24 @@ var otherCampaignMap = (MapDto)((OkObjectResult)await mapsController.Create(seco
 Check(otherCampaignMap.Title == mapCreated.Title, "Different campaigns may use the same map name");
 await mapsController.Delete(second.Id, otherCampaignMap.Id, CancellationToken.None);
 await mapsController.Delete(first.Id, distinctMap.Id, CancellationToken.None);
-Check(mapCreated.IndexStatus == "failed" && await db.CampaignMaps.AnyAsync(x => x.Id == mapCreated.Id && x.Image.Length > 0),
-    "Embedding failures preserve map image and location descriptions");
+Check(mapCreated.IndexStatus == "pending" && await db.CampaignMaps.AnyAsync(x => x.Id == mapCreated.Id && x.Image.Length > 0),
+    "Map saves queue durable indexing while preserving the image and locations");
 fakeEmbeddings.Fail = false;
 await mapsController.Retry(first.Id, mapCreated.Id, CancellationToken.None);
 await mapsController.Retry(first.Id, mapCreated.Id, CancellationToken.None);
-Check(await db.MapKnowledgeChunks.CountAsync(x => x.MapId == mapCreated.Id) == 1, "Map reindex replaces chunks without duplicates");
+Check(await db.MapKnowledgeChunks.CountAsync(x => x.MapId == mapCreated.Id) == 0 &&
+    await db.CampaignMaps.AnyAsync(x => x.Id == mapCreated.Id && x.IndexStatus == "pending"), "Map retries queue indexing without calling embeddings in the request");
 var mapContext = await knowledge.BuildContextAsync(first.Id, dm.Id, "silver key", CancellationToken.None);
-Check(mapContext.Sources.Any(x => x.MapId == mapCreated.Id && x.Excerpt.Contains("Ruined tower")),
-    "Map descriptions enter campaign retrieval with distinct map references");
+Check(!mapContext.Sources.Any(x => x.MapId == mapCreated.Id) && mapContext.Prompt.Contains("Ruined tower"),
+    "Pending maps supply current location facts while semantic retrieval waits for indexing");
 Check(!(await knowledge.BuildContextAsync(second.Id, dm.Id, "silver key", CancellationToken.None)).Sources.Any(x => x.MapId == mapCreated.Id),
     "Map retrieval isolates campaigns");
 mapsController.ControllerContext = Context(noCampaignUser);
 Check(await mapsController.List(first.Id, CancellationToken.None) is NotFoundResult &&
     await mapsController.Image(first.Id, mapCreated.Id, CancellationToken.None) is NotFoundResult,
     "Nonmembers cannot list maps or download their images");
+Check(await mapsController.Thumbnail(first.Id, mapCreated.Id, CancellationToken.None) is NotFoundResult,
+    "Nonmembers cannot download map thumbnails");
 mapsController.ControllerContext = Context(player);
 // Membership was revoked earlier in these checks. Add it back for map read checks.
 if (!await db.CampaignPlayer.AnyAsync(x => x.CampaignId == first.Id && x.UserId == player.Id)) {
@@ -635,6 +834,9 @@ if (!await db.CampaignPlayer.AnyAsync(x => x.CampaignId == first.Id && x.UserId 
 Check(await mapsController.List(first.Id, CancellationToken.None) is OkObjectResult &&
     await mapsController.Image(first.Id, mapCreated.Id, CancellationToken.None) is FileContentResult,
     "Campaign members can view maps and protected images");
+Check(await mapsController.Thumbnail(first.Id, mapCreated.Id, CancellationToken.None) is FileContentResult &&
+    await mapsController.Thumbnail(second.Id, mapCreated.Id, CancellationToken.None) is NotFoundResult,
+    "Thumbnail access requires campaign membership and the matching campaign route");
 Check(await mapsController.Update(first.Id, mapCreated.Id, MapRequest("Changed"), CancellationToken.None) is NotFoundResult &&
     await mapsController.Delete(first.Id, mapCreated.Id, CancellationToken.None) is NotFoundResult &&
     await mapsController.Retry(first.Id, mapCreated.Id, CancellationToken.None) is NotFoundResult,
@@ -649,9 +851,21 @@ Check(!(await knowledge.BuildContextAsync(first.Id, dm.Id, "silver key", Cancell
     "Failed indexing after edits excludes obsolete map passages");
 await mapsController.Retry(first.Id, mapCreated.Id, CancellationToken.None);
 var updatedMapContext = await knowledge.BuildContextAsync(first.Id, dm.Id, "apple", CancellationToken.None);
-Check(updatedMapContext.Sources.Any(x => x.MapId == mapCreated.Id && x.Excerpt.Contains("Apples grow")) &&
+Check(updatedMapContext.Prompt.Contains("Apples grow") && !updatedMapContext.Sources.Any(x => x.MapId == mapCreated.Id) &&
     (await mapsController.Image(first.Id, mapCreated.Id, CancellationToken.None) as FileContentResult)!.FileContents.SequenceEqual(png),
     "Editing updates retrieved text while retaining the image when no replacement is uploaded");
+var previousThumbnail = ((FileContentResult)await mapsController.Thumbnail(first.Id, mapCreated.Id, CancellationToken.None)).FileContents;
+using var replacementBitmap = new SKBitmap(100, 50);
+replacementBitmap.Erase(SKColors.Blue);
+using var replacementImage = SKImage.FromBitmap(replacementBitmap);
+using var replacementData = replacementImage.Encode(SKEncodedImageFormat.Png, 100);
+var replacementBytes = replacementData.ToArray();
+var replacementRequest = MapRequest("Apples grow here now.");
+replacementRequest.Image = new FormFile(new MemoryStream(replacementBytes), 0, replacementBytes.Length, "image", "replacement.png");
+Check(await mapsController.Update(first.Id, mapCreated.Id, replacementRequest, CancellationToken.None) is OkObjectResult &&
+    !((FileContentResult)await mapsController.Thumbnail(first.Id, mapCreated.Id, CancellationToken.None)).FileContents.SequenceEqual(previousThumbnail) &&
+    ((FileContentResult)await mapsController.Image(first.Id, mapCreated.Id, CancellationToken.None)).FileContents.SequenceEqual(replacementBytes),
+    "Replacing a map image replaces its thumbnail while retaining the full uploaded original");
 var placesRequest = MapRequest("Map context");
 placesRequest.LocationsJson = JsonSerializer.Serialize(new[] {
     new MapLocation("Freya's Town", "Trading hub", 10, 20),
@@ -753,5 +967,15 @@ sealed class FakeAudioTranscription : IAudioTranscriptionService
         LastFileName = fileName;
         if (Fail) throw new InvalidOperationException("Provider diagnostic stack must not be displayed.");
         return Task.FromResult("In this recorded session, Freya found a silver key beside a waterfall.");
+    }
+}
+
+sealed class SqlRecorder(List<string> commands) : DbCommandInterceptor
+{
+    public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+        CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+    {
+        commands.Add(command.CommandText);
+        return ValueTask.FromResult(result);
     }
 }

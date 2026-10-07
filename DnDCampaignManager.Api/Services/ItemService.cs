@@ -19,7 +19,7 @@ public sealed class ItemService(DnDxDbContext db)
     {
         var campaign = await db.Campaigns.Include(x => x.Players).SingleOrDefaultAsync(x => x.Id == campaignId, ct)
             ?? throw new ItemException(404, "Campaign not found.");
-        if (!(campaign.OwnerId == userId || campaign.Players.Any(x => x.UserId == userId)))
+        if (!CampaignAuthorization.CanAccess(campaign, userId))
             throw new ItemException(403, "You do not have permission to access these items.");
         return campaign;
     }

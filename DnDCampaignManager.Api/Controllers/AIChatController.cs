@@ -1,3 +1,4 @@
+using DnDCampaignManager.Api.Services;
 using DnDCampaignManager.Api.DTOs.AI_DTO;
 using DnDCampaignManager.Api.Models.AI;
 using DnDCampaignManager.Api.Services.AI;
@@ -17,11 +18,12 @@ namespace DnDCampaignManager.Api.Controllers;
 public class AIChatController : ControllerBase
 {
     private const int MaxMessageLength = 8000;
+    private const string ConversationBusy = "This conversation has an active request. Wait for it to finish before sending or clearing messages.";
     private static readonly JsonSerializerOptions SseJsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly DnDxDbContext _db;
     private readonly IAIService _aiService;
-    private readonly IConfiguration _configuration;
+    private readonly AIRequestLimits _limits;
     private readonly ILogger<AIChatController> _logger;
     private readonly CampaignKnowledgeService _knowledge;
 
@@ -34,7 +36,7 @@ public class AIChatController : ControllerBase
     {
         _db = db;
         _aiService = aiService;
-        _configuration = configuration;
+        _limits = new(configuration);
         _logger = logger;
         _knowledge = knowledge;
     }
@@ -42,7 +44,7 @@ public class AIChatController : ControllerBase
     [HttpGet("status")]
     public IActionResult Status()
     {
-        var configured = !string.IsNullOrWhiteSpace(_configuration["OpenAI:ApiKey"]);
+        var configured = _aiService.IsAvailable;
 
         return Ok(new
         {
@@ -86,7 +88,7 @@ public class AIChatController : ControllerBase
     public async Task<ActionResult<ConversationSummaryDto>> GetOrCreateDefaultConversation(CancellationToken cancellationToken)
     {
         var userId = GetUserId();
-        var campaignId = await _db.Campaigns.Where(c => c.OwnerId == userId || c.Players.Any(p => p.UserId == userId))
+        var campaignId = await _db.Campaigns.AccessibleTo(userId)
             .OrderBy(c => c.Id).Select(c => (int?)c.Id).FirstOrDefaultAsync(cancellationToken);
         return campaignId is int id ? await GetOrCreateCampaignConversation(id, cancellationToken) : NoContent();
     }
@@ -140,16 +142,13 @@ public class AIChatController : ControllerBase
         CancellationToken cancellationToken)
     {
         var userId = GetUserId();
+        var conversation = await LoadConversationAsync(conversationId, userId, cancellationToken);
+        if (conversation is null) return NotFound();
+        await using var operation = await ConversationOperation.TryAcquireAsync(_db, conversationId, cancellationToken);
+        if (operation is null) return Conflict(new { error = ConversationBusy });
+        await _db.Entry(conversation).ReloadAsync(cancellationToken);
         await using var transaction = _db.Database.CurrentTransaction is null
             ? await _db.Database.BeginTransactionAsync(cancellationToken) : null;
-        var user = await _db.Users.FromSqlInterpolated(
-            $"SELECT * FROM \"Users\" WHERE \"Id\" = {userId} FOR UPDATE")
-            .SingleOrDefaultAsync(cancellationToken);
-        if (user is null) return Unauthorized();
-        var conversation = await LoadConversationAsync(conversationId, userId, cancellationToken);
-
-        if (conversation is null)
-            return NotFound();
 
         await _db.AIMessages.Where(x => x.ConversationId == conversationId).ExecuteDeleteAsync(cancellationToken);
         conversation.Title = "New AI Conversation";
@@ -174,18 +173,26 @@ public class AIChatController : ControllerBase
         if (conversation is null)
             return NotFound(new { error = "Conversation not found." });
 
+        if (!_aiService.IsAvailable)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = AIServiceRegistration.UnavailableMessage });
+
+        await using var operation = await ConversationOperation.TryAcquireAsync(_db, conversationId, cancellationToken);
+        if (operation is null) return Conflict(new { error = ConversationBusy });
+        await _db.Entry(conversation).ReloadAsync(cancellationToken);
+
         var userMessage = CreateUserMessage(conversationId, request.Message);
         _db.AIMessages.Add(userMessage);
         UpdateConversation(conversation, request.Message);
         await _db.SaveChangesAsync(cancellationToken);
 
-        var history = await LoadHistoryAsync(conversationId, cancellationToken);
+        using var deadline = _limits.Deadline(cancellationToken, _limits.RequestTimeoutSeconds);
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         try
         {
-            var context = await BuildContextAsync(conversation, userId, request.Message, cancellationToken);
-            var completion = await _aiService.GetChatResponseAsync(history, cancellationToken, context?.Prompt, new CampaignToolScope(userId, conversation.CampaignId!.Value));
+            var history = await LoadHistoryAsync(conversationId, deadline.Token);
+            var context = await BuildContextAsync(conversation, userId, request.Message, deadline.Token);
+            var completion = await _aiService.GetChatResponseAsync(history, deadline.Token, context?.Prompt, new CampaignToolScope(userId, conversation.CampaignId!.Value));
             stopwatch.Stop();
 
             var assistantMessage = CreateAssistantMessage(conversationId, completion);
@@ -209,6 +216,14 @@ public class AIChatController : ControllerBase
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            return StatusCode(StatusCodes.Status504GatewayTimeout, new { error = "The AI request timed out. Please try again." });
+        }
+        catch (AIRequestLimitException ex)
+        {
+            return UnprocessableEntity(new { error = ex.Message });
         }
         catch (Exception ex)
         {
@@ -245,6 +260,23 @@ public class AIChatController : ControllerBase
             return;
         }
 
+        if (!_aiService.IsAvailable)
+        {
+            Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            await Response.WriteAsJsonAsync(new { error = AIServiceRegistration.UnavailableMessage }, cancellationToken);
+            return;
+        }
+
+        await using var operation = await ConversationOperation.TryAcquireAsync(_db, conversationId, cancellationToken);
+        if (operation is null)
+        {
+            Response.StatusCode = StatusCodes.Status409Conflict;
+            Response.ContentType = "application/json";
+            await Response.WriteAsJsonAsync(new { error = ConversationBusy }, cancellationToken);
+            return;
+        }
+        await _db.Entry(conversation).ReloadAsync(cancellationToken);
+
         Response.StatusCode = StatusCodes.Status200OK;
         Response.ContentType = "text/event-stream; charset=utf-8";
         Response.Headers.CacheControl = "no-cache";
@@ -255,13 +287,14 @@ public class AIChatController : ControllerBase
         UpdateConversation(conversation, request.Message);
         await _db.SaveChangesAsync(cancellationToken);
 
-        var history = await LoadHistoryAsync(conversationId, cancellationToken);
+        using var deadline = _limits.Deadline(cancellationToken, _limits.RequestTimeoutSeconds);
         var assistantText = new StringBuilder();
 
         try
         {
-            var context = await BuildContextAsync(conversation, userId, request.Message, cancellationToken);
-            await foreach (var update in _aiService.StreamChatResponseAsync(history, cancellationToken, context?.Prompt, new CampaignToolScope(userId, conversation.CampaignId!.Value)))
+            var history = await LoadHistoryAsync(conversationId, deadline.Token);
+            var context = await BuildContextAsync(conversation, userId, request.Message, deadline.Token);
+            await foreach (var update in _aiService.StreamChatResponseAsync(history, deadline.Token, context?.Prompt, new CampaignToolScope(userId, conversation.CampaignId!.Value)))
             {
                 if (update.Type == "token" && update.Text is not null)
                 {
@@ -300,12 +333,21 @@ public class AIChatController : ControllerBase
                                 completion.Usage.EstimatedCostUsd)
                         },
                         cancellationToken);
+                    return;
                 }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             _logger.LogInformation("AI stream cancelled for conversation {ConversationId}.", conversationId);
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            await WriteSseAsync("error", new { error = "The AI request timed out. Please try again." }, cancellationToken);
+        }
+        catch (AIRequestLimitException ex)
+        {
+            await WriteSseAsync("error", new { error = ex.Message }, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -328,7 +370,7 @@ public class AIChatController : ControllerBase
     private IQueryable<AIConversation> AccessibleConversations(int userId)
     {
         return _db.AIConversations.Where(x => x.UserId == userId && x.CampaignId != null &&
-            (x.Campaign!.OwnerId == userId || x.Campaign.Players.Any(p => p.UserId == userId)));
+            _db.Campaigns.AccessibleTo(userId).Any(c => c.Id == x.CampaignId));
     }
 
     private Task<CampaignContext?> BuildContextAsync(AIConversation conversation, int userId, string question, CancellationToken ct)
@@ -352,9 +394,9 @@ public class AIChatController : ControllerBase
     {
         return await _db.AIMessages
             .Where(x => x.ConversationId == conversationId && x.Status == "completed")
-            .OrderByDescending(x => x.CreatedAtUtc)
+            .OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id)
             .Take(30)
-            .OrderBy(x => x.CreatedAtUtc)
+            .OrderBy(x => x.CreatedAtUtc).ThenBy(x => x.Id)
             .ToListAsync(cancellationToken);
     }
 

@@ -1,4 +1,5 @@
-import api from "./axios";
+import { extractApiResponseError, extractErrorMessage } from "../Utils/apiError";
+import api, { refreshAccessToken } from "./axios";
 
 export type ConversationSummary = {
     id: string;
@@ -120,9 +121,7 @@ async function fetchStream(
 
     if (response.status === 401 && retryAfterRefresh) {
         try {
-            const refresh = await api.post("/auth/refresh");
-            const newToken = refresh.data.accessToken;
-            localStorage.setItem("token", newToken);
+            await refreshAccessToken();
             return fetchStream(
                 conversationId,
                 message,
@@ -140,7 +139,7 @@ async function fetchStream(
         let messageText = "The AI request failed.";
         try {
             const body = await response.json();
-            messageText = body.error ?? body.detail ?? messageText;
+            messageText = extractApiResponseError(response.status, body, messageText);
         } catch {
             // Keep the generic message when the server did not return JSON.
         }
@@ -183,7 +182,7 @@ async function fetchStream(
             onDone(payload as StreamDoneEvent);
             terminal = true;
         } else if (eventName === "error") {
-            onError(payload.error ?? "The AI request failed.");
+            onError(extractErrorMessage(payload, "The AI request failed."));
             terminal = true;
         }
     };

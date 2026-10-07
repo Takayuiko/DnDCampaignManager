@@ -5,6 +5,12 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 
+const errorExports = {};
+vm.runInNewContext(ts.transpileModule(
+    fs.readFileSync(path.join(__dirname, '../src/Utils/apiError.ts'), 'utf8'),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }
+).outputText, { exports: errorExports, require });
+
 const compiled = ts.transpileModule(
     fs.readFileSync(path.join(__dirname, '../src/api/aiApi.ts'), 'utf8'),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }
@@ -29,7 +35,7 @@ function client(streamText, chunkSize = 7, cancel = () => {}, keepOpen = false) 
     vm.runInNewContext(compiled, {
         exports: exportsObject, TextDecoder,
         localStorage: { getItem: () => 'test-token' },
-        require: () => ({ default: { defaults: { baseURL: '/api' } } }),
+        require: name => name === '../Utils/apiError' ? errorExports : ({ default: { defaults: { baseURL: '/api' } } }),
         fetch: async () => ({ ok: true, status: 200, body })
     });
     return exportsObject;

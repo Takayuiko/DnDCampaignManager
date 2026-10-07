@@ -11,6 +11,11 @@ public sealed record CharacterToolResult(int Id, string Name, string Class, stri
     int Strength, int Dexterity, int Constitution, int Intelligence, int Wisdom, int Charisma,
     int ArmorClass, int Speed, int HitPointMax, int HitPointCurrent, int HitPointTemporary);
 
+public sealed record InventoryEntryToolResult(int Id, int ItemId, string Name, string Category,
+    string Description, decimal? WeightLb, decimal? CostGp, int Quantity, string Notes);
+public sealed record InventoryToolResult(int CharacterId, string CharacterName,
+    IReadOnlyList<InventoryEntryToolResult> Items, int OmittedEntries);
+
 // The only application data operations available to the model and MCP clients in this first slice.
 public sealed class CampaignToolService(DnDxDbContext db, CampaignKnowledgeService knowledge)
 {
@@ -49,6 +54,25 @@ public sealed class CampaignToolService(DnDxDbContext db, CampaignKnowledgeServi
                 c.ArmorClass, c.Speed, c.HitPointMax, c.HitPointCurrent, c.HitPointTemporary)).SingleOrDefaultAsync(ct);
     }
 
+    public async Task<InventoryToolResult?> GetCharacterInventoryAsync(CampaignToolScope scope, int characterId, CancellationToken ct)
+    {
+        await RequireAccessAsync(scope, ct);
+        var character = await db.Characters.AsNoTracking().Where(c => c.Id == characterId && c.CampaignId == scope.CampaignId)
+            .Select(c => new { c.Id, c.Name, c.UserId, c.Campaign.OwnerId }).SingleOrDefaultAsync(ct);
+        if (character is null) return null;
+        var campaignDm = character.OwnerId == scope.UserId &&
+            await db.Users.AnyAsync(u => u.Id == scope.UserId && u.Role == "DM", ct);
+        if (character.UserId != scope.UserId && !campaignDm)
+            throw new UnauthorizedAccessException("You cannot view this character's inventory.");
+        // Bound both row count and serialized output without splitting JSON or item descriptions.
+        var entries = await db.CharacterItems.AsNoTracking().Where(i => i.CampaignId == scope.CampaignId && i.CharacterId == characterId)
+            .OrderBy(i => i.Id).Take(100).Select(i => new InventoryEntryToolResult(i.Id, i.ItemId,
+                i.Item.Name, i.Item.Category, i.Item.Description, i.Item.WeightLb, i.Item.CostGp, i.Quantity, i.Notes)).ToListAsync(ct);
+        var count = await db.CharacterItems.CountAsync(i => i.CampaignId == scope.CampaignId && i.CharacterId == characterId, ct);
+        while (JsonSerializer.Serialize(entries, JsonOptions).Length > 16000) entries.RemoveAt(entries.Count - 1);
+        return new(character.Id, character.Name, entries, Math.Max(0, count - entries.Count));
+    }
+
     public async Task<string> ExecuteAsync(CampaignToolScope scope, string name, string arguments, CancellationToken ct)
     {
         // Strict schemas assist the model, but application validation remains authoritative.
@@ -66,10 +90,15 @@ public sealed class CampaignToolService(DnDxDbContext db, CampaignKnowledgeServi
                     result = await GetCampaignStateAsync(scope, ct); break;
                 case "ListCharacters" when properties.Length == 0:
                     result = await ListCharactersAsync(scope, ct); break;
-                case "GetCharacter" when properties.Length == 1 && properties[0] == "characterId" &&
+                case "GetCharacter" or "GetCharacterInventory" when properties.Length == 1 && properties[0] == "characterId" &&
                     root.GetProperty("characterId").ValueKind == JsonValueKind.Number &&
                     root.GetProperty("characterId").TryGetInt32(out var id) && id > 0:
-                    result = await GetCharacterAsync(scope, id, ct);
+                    if (name == "GetCharacterInventory")
+                    {
+                        try { result = await GetCharacterInventoryAsync(scope, id, ct); }
+                        catch (UnauthorizedAccessException) { return Error("Inventory not found or access denied."); }
+                    }
+                    else result = await GetCharacterAsync(scope, id, ct);
                     if (result is null) return Error("Character not found in this campaign.");
                     break;
                 default: return Error("Unknown tool or invalid arguments.");

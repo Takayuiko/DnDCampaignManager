@@ -8,12 +8,12 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using System.Text.Json;
+using DnDCampaignManager.Api.Services;
 
 namespace DnDCampaignManager.Api.Controllers;
 
 [ApiController, Authorize, Route("api/campaigns/{campaignId:int}/maps")]
-public sealed class CampaignMapsController(DnDxDbContext db, CampaignKnowledgeService access,
-    MapKnowledgeService index) : ControllerBase
+public sealed class CampaignMapsController(DnDxDbContext db, CampaignKnowledgeService access) : ControllerBase
 {
     private int UserId => int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
     private static MapDto Dto(CampaignMap map) => new(map.Id, map.CampaignId, map.Title,
@@ -40,6 +40,37 @@ public sealed class CampaignMapsController(DnDxDbContext db, CampaignKnowledgeSe
         return File(map.Image, map.ImageContentType);
     }
 
+    [HttpGet("{mapId:long}/thumbnail")]
+    public async Task<IActionResult> Thumbnail(int campaignId, long mapId, CancellationToken ct)
+    {
+        if (!await access.CanAccessAsync(campaignId, UserId, ct)) return NotFound();
+        var map = await db.CampaignMaps.AsNoTracking().Where(x => x.Id == mapId && x.CampaignId == campaignId)
+            .Select(x => new { x.Thumbnail }).SingleOrDefaultAsync(ct);
+        if (map is null) return NotFound();
+        var thumbnail = map.Thumbnail;
+        if (thumbnail is null)
+        {
+            var original = await db.CampaignMaps.AsNoTracking().Where(x => x.Id == mapId && x.CampaignId == campaignId)
+                .Select(x => x.Image).SingleOrDefaultAsync(ct);
+            if (original is null) return NotFound();
+            thumbnail = MapThumbnail.Create(original);
+            if (thumbnail is null) return UnprocessableEntity(new { error = "A preview could not be generated. Replace the map image to try again." });
+            // Do not overwrite a preview from a concurrent image replacement.
+            var saved = await db.CampaignMaps.Where(x => x.Id == mapId && x.CampaignId == campaignId &&
+                x.Thumbnail == null && x.Image == original)
+                .ExecuteUpdateAsync(updates => updates.SetProperty(x => x.Thumbnail, thumbnail), ct);
+            if (saved == 0)
+            {
+                thumbnail = await db.CampaignMaps.AsNoTracking().Where(x => x.Id == mapId && x.CampaignId == campaignId)
+                    .Select(x => x.Thumbnail).SingleOrDefaultAsync(ct);
+                if (thumbnail is null) return NotFound();
+            }
+        }
+        Response.Headers.CacheControl = "no-store";
+        Response.Headers.XContentTypeOptions = "nosniff";
+        return File(thumbnail, "image/jpeg");
+    }
+
     [HttpPost, Authorize(Roles = "DM"), EnableRateLimiting("ai")]
     [RequestSizeLimit(51000000), RequestFormLimits(MultipartBodyLengthLimit = 51000000)]
     public Task<IActionResult> Create(int campaignId, [FromForm] SaveMapRequest request, CancellationToken ct) => Save(campaignId, null, request, ct);
@@ -60,6 +91,7 @@ public sealed class CampaignMapsController(DnDxDbContext db, CampaignKnowledgeSe
                 x.X is < 0 or > 100 || x.Y is < 0 or > 100))
             return BadRequest(new { error = "Enter a title and 1–50 named locations with valid descriptions and pin coordinates." });
         byte[]? image = null;
+        byte[]? thumbnail = null;
         string? mime = null;
         if (request.Image is not null)
         {
@@ -69,6 +101,8 @@ public sealed class CampaignMapsController(DnDxDbContext db, CampaignKnowledgeSe
             image = buffer.ToArray();
             mime = DetectImageType(image);
             if (mime is null) return BadRequest(new { error = "Choose a PNG, JPEG or WebP image." });
+            thumbnail = MapThumbnail.Create(image);
+            if (thumbnail is null) return BadRequest(new { error = "Choose a valid PNG, JPEG or WebP image with supported dimensions." });
         }
         if (mapId is null && image is null) return BadRequest(new { error = "An image is required." });
         await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
@@ -86,8 +120,9 @@ public sealed class CampaignMapsController(DnDxDbContext db, CampaignKnowledgeSe
         map.Title = request.Title.Trim(); map.Description = (request.Description ?? "").Trim();
         map.NormalizedTitle = normalizedTitle;
         map.LocationsJson = JsonSerializer.Serialize(locations.Select(x => x with { Name = x.Name.Trim(), Description = x.Description.Trim() }));
-        if (image is not null) { map.Image = image; map.ImageContentType = mime!; }
-        await index.IndexAsync(map, ct);
+        if (image is not null) { map.Image = image; map.ImageContentType = mime!; map.Thumbnail = thumbnail; }
+        MapKnowledgeService.QueueForIndex(map);
+        await db.SaveChangesAsync(ct);
         if (transaction is not null) await transaction.CommitAsync(ct);
         return Ok(Dto(map));
     }
@@ -110,7 +145,9 @@ public sealed class CampaignMapsController(DnDxDbContext db, CampaignKnowledgeSe
         await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         var map = await LockedMap(campaignId, mapId, ct);
         if (map is null) return NotFound();
-        await index.IndexAsync(map, ct);
+        if (map.IndexStatus == "pending") return Ok(Dto(map));
+        MapKnowledgeService.QueueForIndex(map);
+        await db.SaveChangesAsync(ct);
         if (transaction is not null) await transaction.CommitAsync(ct);
         return Ok(Dto(map));
     }

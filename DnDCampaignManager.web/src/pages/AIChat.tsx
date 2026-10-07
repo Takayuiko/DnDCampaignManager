@@ -1,3 +1,4 @@
+import { isAxiosError } from "axios";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
     createConversation,
@@ -167,8 +168,10 @@ export default function AIChat() {
             setConversation({ ...replacement, messages: [] });
             setInput("");
             setError("");
-        } catch {
-            setError("Unable to clear this campaign chat.");
+        } catch (requestError) {
+            setError(isAxiosError(requestError) && requestError.response?.status === 409
+                ? "This conversation has an active request. Wait for it to finish before clearing messages."
+                : "Unable to clear this campaign chat.");
         } finally {
             setLoadingConversation(false);
         }
@@ -178,7 +181,7 @@ export default function AIChat() {
         event.preventDefault();
 
         const message = input.trim();
-        if (loading || loadingConversation || !conversation) return;
+        if (loading || loadingConversation || !conversation || status?.configured === false) return;
         if (!message) {
             setError("Enter a message before sending.");
             return;
@@ -368,6 +371,9 @@ export default function AIChat() {
                                         : "Select a campaign to open its chat."}
                                 </div>
                             </div>
+                            {status?.configured === false && (
+                                <p className="mx-5 mt-4 text-sm text-amber-800">AI chat is unavailable until OpenAI is configured on the server. Your saved conversations remain available.</p>
+                            )}
                             {loadingConversation && (
                                 <span className="text-xs text-stone-500">Loading...</span>
                             )}
@@ -403,12 +409,12 @@ export default function AIChat() {
                                     value={input}
                                     onChange={event => setInput(event.target.value)}
                                     placeholder="Ask the Dungeon Master..."
-                                    disabled={loading || loadingConversation || !conversation}
+                                    disabled={loading || loadingConversation || !conversation || status?.configured === false}
                                     className="min-w-0 flex-1 rounded-xl border border-stone-300 bg-white px-4 py-3 text-stone-800 outline-none focus:border-stone-500 focus:ring-2 focus:ring-amber-200 disabled:bg-stone-100"
                                 />
                                 <button
                                     type="submit"
-                                    disabled={loading || loadingConversation || !conversation}
+                                    disabled={loading || loadingConversation || !conversation || status?.configured === false}
                                     className="rounded-xl bg-stone-800 px-5 py-3 font-semibold text-white shadow hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                     {loading ? "Thinking..." : "Send"}

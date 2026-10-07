@@ -164,3 +164,36 @@ test('players cannot select general chat and need campaign membership to start a
         if (campaigns.length === 0) assert.equal(nodes.some(n => n.props?.children === 'Join a campaign to use AI chat.'), true);
     }
 });
+
+
+test('unconfigured AI disables sending while saved conversations remain visible', async () => {
+    const states = []; let cursor = 0; let requests = 0;
+    const chat = {};
+    vm.runInNewContext(compile('pages/AIChat.tsx'), {
+        exports: chat,
+        require(name) {
+            if (name === 'react') return {
+                useState(initial) {
+                    const index = cursor++;
+                    if (!(index in states)) states[index] = index === 2 ? { configured: false, model: 'test', provider: 'OpenAI' }
+                        : index === 1 ? { id: 'saved', title: 'Saved', campaignId: 1, messages: [] }
+                        : index === 5 ? false : initial;
+                    return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }];
+                }, useRef: initial => ({ current: initial }), useEffect() {}, useMemo: f => f()
+            };
+            if (name === '../api/aiApi') return { streamAIMessage() { requests++; } };
+            if (name === '../api/campaignApi') return {};
+            return require(name);
+        }
+    });
+    function render() { cursor = 0; return chat.default(); }
+    const nodes = elements(render());
+    assert.equal(nodes.find(n => n.type === 'input').props.disabled, true);
+    assert.equal(nodes.find(n => n.type === 'button' && n.props.type === 'submit').props.disabled, true);
+    assert.equal(nodes.some(n => typeof n.props?.children === 'string' && n.props.children.includes('AI chat is unavailable')), true);
+    assert.equal(nodes.find(n => n.type === 'button' && n.props.children === 'Clear chat').props.disabled, false);
+    await nodes.find(n => n.type === 'form').props.onSubmit({ preventDefault() {} });
+    assert.equal(requests, 0);
+    assert.equal(states[1].id, 'saved');
+    assert.equal(states[1].messages.length, 0);
+});

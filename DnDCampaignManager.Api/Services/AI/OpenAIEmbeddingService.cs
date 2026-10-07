@@ -9,6 +9,8 @@ public sealed class OpenAIEmbeddingService(EmbeddingClient client, IConfiguratio
 
     public async Task<EmbeddingBatch> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken cancellationToken)
     {
+        using var deadline = new AIRequestLimits(configuration).Deadline(cancellationToken, new AIRequestLimits(configuration).EmbeddingTimeoutSeconds);
+        cancellationToken = deadline.Token;
         OpenAIEmbeddingCollection result = await client.GenerateEmbeddingsAsync(inputs,
             new EmbeddingGenerationOptions { Dimensions = Dimensions }, cancellationToken);
         return new EmbeddingBatch(result.OrderBy(x => x.Index).Select(x => x.ToFloats().ToArray()).ToArray(),

@@ -54,6 +54,8 @@ public sealed class CampaignSessionNotesController(DnDxDbContext db, CampaignKno
     {
         if (!await knowledge.CanManageAsync(campaignId, UserId, ct) ||
             !await db.CampaignSessionNotes.AnyAsync(x => x.Id == noteId && x.CampaignId == campaignId, ct)) return NotFound();
+        if (!knowledge.IsIndexingAvailable)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = AIServiceRegistration.UnavailableMessage });
         await knowledge.IndexAsync(noteId, campaignId, UserId, ct);
         return Ok(await GetDto(noteId, ct));
     }

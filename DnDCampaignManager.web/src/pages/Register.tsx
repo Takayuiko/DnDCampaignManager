@@ -1,34 +1,10 @@
 import { useState } from "react";
+import { isAxiosError } from "axios";
+import { extractApiError } from "../Utils/apiError";
 import { Link, useNavigate } from "react-router-dom";
 import { register } from "../api/authApi";
 import { useAuth } from "../auth/AuthContext";
 import Button from "../components/UI/Button";
-
-function extractRegisterError(err: any): string {
-    const data = err?.response?.data.message;
-
-    // Common: backend returns a plain string like "Email already registered"
-    if (typeof data === "string") {
-        if (data.toLowerCase().includes("Email already")) {
-            return "That email is already registered. Try logging in instead.";
-        }
-        return data;
-    }
-
-    // Common: ASP.NET validation response
-    // { title, status, errors: { Email: ["..."], Password: ["..."] } }
-    if (data?.errors && typeof data.errors === "object") {
-        const parts: string[] = [];
-        for (const key of Object.keys(data.errors)) {
-            const msgs = data.errors[key];
-            if (Array.isArray(msgs)) parts.push(...msgs);
-        }
-        if (parts.length) return parts.join(" ");
-    }
-
-    // Fallback
-    return "Registration failed. Please try again.";
-}
 
 export default function Register() {
     const [email, setEmail] = useState("");
@@ -60,8 +36,10 @@ export default function Register() {
 
             await auth.loginWithToken(accessToken);
             navigate("/dashboard");
-        } catch (err: any) {
-            setError(extractRegisterError(err));
+        } catch (err: unknown) {
+            setError(isAxiosError(err) && err.response?.status === 429
+                ? "Too many attempts. Please wait a minute and try again."
+                : extractApiError(err, "Registration failed. Please try again."));
         } finally {
             setSubmitting(false);
         }
@@ -120,6 +98,8 @@ export default function Register() {
                                 </label>
                                 <input
                                     value={email}
+                                    type="email"
+                                    maxLength={254}
                                     onChange={e => setEmail(e.target.value)}
                                     placeholder="you@party.com"
                                     autoComplete="email"
@@ -140,10 +120,11 @@ export default function Register() {
                                     autoComplete="new-password"
                                     className="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 shadow-sm focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                                     required
-                                    minLength={8}
+                                    minLength={12}
+                                    maxLength={128}
                                 />
                                 <p className="mt-1 text-xs text-stone-600">
-                                    Tip: Use 8+ characters (tighten rules later).
+                                    Use between 12 and 128 characters.
                                 </p>
                             </div>
 
@@ -159,7 +140,8 @@ export default function Register() {
                                     autoComplete="new-password"
                                     className="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900 shadow-sm focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                                     required
-                                    minLength={8}
+                                    minLength={12}
+                                    maxLength={128}
                                 />
                             </div>
 

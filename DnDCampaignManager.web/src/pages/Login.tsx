@@ -1,31 +1,10 @@
+import { extractLoginError } from "../Utils/apiError";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { login } from "../api/authApi";
 import { useAuth } from "../auth/AuthContext";
 import Button from "../components/UI/Button";
 
-function extractLoginError(err: any): string {
-    const status = err?.response?.status;
-    const data = err?.response?.data;
-
-    // Typical auth failures
-    if (status === 401) return "Invalid email or password.";
-
-    // If backend returns a string message
-    if (typeof data === "string") return data;
-
-    // ASP.NET validation format
-    if (data?.errors && typeof data.errors === "object") {
-        const parts: string[] = [];
-        for (const key of Object.keys(data.errors)) {
-            const msgs = data.errors[key];
-            if (Array.isArray(msgs)) parts.push(...msgs);
-        }
-        if (parts.length) return parts.join(" ");
-    }
-
-    return "Login failed. Please try again.";
-}
 
 export default function Login() {
     const [email, setEmail] = useState("");
@@ -50,7 +29,7 @@ export default function Login() {
 
             await auth.loginWithToken(accessToken);
             navigate("/dashboard");
-        } catch (err: any) {
+        } catch (err: unknown) {
             setError(extractLoginError(err));
         } finally {
             setSubmitting(false);

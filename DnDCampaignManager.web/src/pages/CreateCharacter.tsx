@@ -105,7 +105,7 @@ export default function CreateCharacter() {
         try {
             await createCharacter(campaignIdParam, form);
             navigate("/dashboard");
-        } catch (err: any) {
+        } catch (err: unknown) {
             setError(extractApiError(err, "Failed to create character."));
         } finally {
             setSubmitting(false);

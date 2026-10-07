@@ -8,6 +8,8 @@ public sealed class OpenAIAudioTranscriptionService(AudioClient client, IConfigu
 
     public async Task<string> TranscribeAsync(Stream audio, string fileName, CancellationToken ct)
     {
+        using var deadline = new AIRequestLimits(configuration).Deadline(ct, new AIRequestLimits(configuration).TranscriptionTimeoutSeconds);
+        ct = deadline.Token;
         AudioTranscription result = await client.TranscribeAudioAsync(audio, fileName, new AudioTranscriptionOptions(), ct);
         return result.Text;
     }

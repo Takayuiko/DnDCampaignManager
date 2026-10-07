@@ -11,9 +11,6 @@ using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using OpenAI.Responses;
-using OpenAI.Embeddings;
-using OpenAI.Audio;
 using System.Text;
 using ModelContextProtocol.AspNetCore;
 
@@ -113,29 +110,11 @@ builder.Services.AddScoped<DnDCampaignManager.Api.Services.CurrentTokenValidator
 builder.Services.AddScoped<DnDCampaignManager.Api.Services.DungeonMasterManagementService>();
 builder.Services.AddScoped<DnDCampaignManager.Api.Services.ItemService>();
 
-// OpenAI Responses API
-var openAiApiKey = builder.Configuration["OpenAI:ApiKey"];
-
-if (string.IsNullOrWhiteSpace(openAiApiKey))
-{
-    throw new InvalidOperationException(
-        "OpenAI:ApiKey must be configured using .NET User Secrets or an environment variable.");
-}
-
-builder.Services.AddSingleton(new ResponsesClient(openAiApiKey));
-builder.Services.AddScoped<IAIService, OpenAIService>();
-builder.Services.AddSingleton(new EmbeddingClient(
-    builder.Configuration["OpenAI:EmbeddingModel"] ?? "text-embedding-3-small", openAiApiKey));
-builder.Services.AddScoped<IEmbeddingService, OpenAIEmbeddingService>();
-builder.Services.AddScoped<CampaignKnowledgeService>();
-builder.Services.AddScoped<MapKnowledgeService>();
-builder.Services.AddScoped<CampaignToolService>();
+// AI providers are optional; campaign access and read-only tools remain available without them.
+builder.Services.AddCampaignAI(builder.Configuration);
 builder.Services.AddMcpServer()
     .WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
     .WithTools<CampaignMcpTools>();
-builder.Services.AddSingleton(new AudioClient(
-    builder.Configuration["OpenAI:TranscriptionModel"] ?? "gpt-transcribe", openAiApiKey));
-builder.Services.AddScoped<IAudioTranscriptionService, OpenAIAudioTranscriptionService>();
 
 // Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -188,6 +167,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    AuthenticationRateLimits.Configure(options);
 
     options.AddPolicy("ai", httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(

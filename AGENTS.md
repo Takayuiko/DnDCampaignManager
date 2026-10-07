@@ -42,7 +42,7 @@ Development should remain incremental. Preserve working functionality and the ex
 
 \- Refresh tokens
 
-\- SQLite for local development
+\- PostgreSQL via Npgsql (local development uses Docker Compose)
 
 
 
