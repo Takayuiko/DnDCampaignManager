@@ -174,6 +174,8 @@ export default function EditCharacter() {
 
     return (
         <CharacterSheetForm
+            key={`${cid}-${chid}`}
+            characterId={chid}
             title="🧙 Character Sheet"
             subtitle="Update the essentials from your D&D 5e page 1."
             topRight={topRight}

@@ -7,9 +7,16 @@ SELECT count(*) = 1 AS exactly_one
 FROM "Users" WHERE lower("Email") = lower(:'dm_email')
 \gset
 \if :exactly_one
-UPDATE "Users" SET "Role" = 'DM'
+DELETE FROM "RefreshTokens" WHERE "UserId" IN (
+    SELECT "Id" FROM "Users" WHERE lower("Email") = lower(:'dm_email')
+    AND ("Role" <> 'DM' OR (lower("Email") = 'hagges02@gmail.com' AND NOT "IsAdmin"))
+);
+UPDATE "Users" SET
+    "TokenVersion" = "TokenVersion" + CASE WHEN "Role" <> 'DM' OR (lower("Email") = 'hagges02@gmail.com' AND NOT "IsAdmin") THEN 1 ELSE 0 END,
+    "Role" = 'DM',
+    "IsAdmin" = "IsAdmin" OR lower("Email") = 'hagges02@gmail.com'
 WHERE lower("Email") = lower(:'dm_email');
-SELECT "Id", "Email", "Role" FROM "Users"
+SELECT "Id", "Email", "Role", "IsAdmin" FROM "Users"
 WHERE lower("Email") = lower(:'dm_email');
 COMMIT;
 \else

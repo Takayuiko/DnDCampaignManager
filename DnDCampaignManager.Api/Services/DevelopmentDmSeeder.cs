@@ -8,6 +8,7 @@ namespace DnDCampaignManager.Api.Services;
 
 public static class DevelopmentDmSeeder
 {
+    public const string AdministratorEmail = "hagges02@gmail.com";
     public static async Task RunAsync(IConfiguration configuration, IHostEnvironment environment)
     {
         if (!environment.IsDevelopment())
@@ -41,12 +42,18 @@ public static class DevelopmentDmSeeder
             user.PasswordHash = new PasswordHasher<User>().HashPassword(user, password);
             db.Users.Add(user);
         }
-        else
+        var wasChanged = user.Role != Roles.DM ||
+            (email.Equals(AdministratorEmail, StringComparison.OrdinalIgnoreCase) && !user.IsAdmin);
+        user.Role = Roles.DM;
+        if (email.Equals(AdministratorEmail, StringComparison.OrdinalIgnoreCase)) user.IsAdmin = true;
+        if (wasChanged)
         {
-            user.Role = Roles.DM;
+            user.TokenVersion++;
+            await db.RefreshTokens.Where(t => t.UserId == user.Id).ExecuteDeleteAsync();
         }
 
         await db.SaveChangesAsync();
-        Console.WriteLine("Development DM account is ready. Existing passwords are unchanged.");
+        Console.WriteLine(user.IsAdmin ? "Development DM and administrator account is ready. Existing passwords are unchanged."
+            : "Development DM account is ready. Existing passwords are unchanged.");
     }
 }

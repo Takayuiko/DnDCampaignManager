@@ -28,6 +28,9 @@ namespace DnDCampaignManager.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<int?>("CampaignId")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -42,6 +45,11 @@ namespace DnDCampaignManager.Api.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CampaignId");
+
+                    b.HasIndex("UserId", "CampaignId")
+                        .IsUnique();
 
                     b.HasIndex("UserId", "UpdatedAtUtc");
 
@@ -85,9 +93,21 @@ namespace DnDCampaignManager.Api.Migrations
                     b.Property<string>("ResponseId")
                         .HasColumnType("text");
 
+                    b.Property<int>("RetrievalInputTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RetrievalWarning")
+                        .HasColumnType("text");
+
                     b.Property<string>("Role")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("SourcesJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("[]");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -101,6 +121,85 @@ namespace DnDCampaignManager.Api.Migrations
                     b.HasIndex("ConversationId", "CreatedAtUtc");
 
                     b.ToTable("AIMessages");
+                });
+
+            modelBuilder.Entity("DnDCampaignManager.Api.Models.AI.CampaignKnowledgeChunk", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<float[]>("Embedding")
+                        .IsRequired()
+                        .HasColumnType("real[]");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("SessionNoteId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SessionNoteId", "Position")
+                        .IsUnique();
+
+                    b.ToTable("CampaignKnowledgeChunks");
+                });
+
+            modelBuilder.Entity("DnDCampaignManager.Api.Models.AI.CampaignSessionNote", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("CampaignId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("EmbeddingDimensions")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("EmbeddingInputTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("EmbeddingModel")
+                        .HasColumnType("text");
+
+                    b.Property<string>("IndexStatus")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateOnly>("PlayedOn")
+                        .HasColumnType("date");
+
+                    b.Property<int>("SessionNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CampaignId", "SessionNumber");
+
+                    b.ToTable("CampaignSessionNotes");
                 });
 
             modelBuilder.Entity("DnDCampaignManager.Api.Models.Campaign", b =>
@@ -130,6 +229,62 @@ namespace DnDCampaignManager.Api.Migrations
                     b.HasIndex("OwnerId");
 
                     b.ToTable("Campaigns");
+                });
+
+            modelBuilder.Entity("DnDCampaignManager.Api.Models.CampaignItem", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("CampaignId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<decimal?>("CostGp")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("NormalizedName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("Source")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<decimal?>("WeightLb")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CampaignId", "NormalizedName")
+                        .IsUnique();
+
+                    b.ToTable("CampaignItems", t =>
+                        {
+                            t.HasCheckConstraint("CK_CampaignItems_Cost", "\"CostGp\" IS NULL OR \"CostGp\" >= 0");
+
+                            t.HasCheckConstraint("CK_CampaignItems_Weight", "\"WeightLb\" IS NULL OR \"WeightLb\" >= 0");
+                        });
                 });
 
             modelBuilder.Entity("DnDCampaignManager.Api.Models.CampaignPlayer", b =>
@@ -396,6 +551,46 @@ namespace DnDCampaignManager.Api.Migrations
                     b.ToTable("CharacterClassOptions");
                 });
 
+            modelBuilder.Entity("DnDCampaignManager.Api.Models.CharacterItem", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("AssignedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("CampaignId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("CharacterId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ItemId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Notes")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CharacterId", "CampaignId");
+
+                    b.HasIndex("ItemId", "CampaignId");
+
+                    b.ToTable("CharacterItems", t =>
+                        {
+                            t.HasCheckConstraint("CK_CharacterItems_Quantity", "\"Quantity\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("DnDCampaignManager.Api.Models.CharacterRaceOption", b =>
                 {
                     b.Property<int>("Id")
@@ -511,6 +706,9 @@ namespace DnDCampaignManager.Api.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<bool>("IsAdmin")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("text");
@@ -527,16 +725,26 @@ namespace DnDCampaignManager.Api.Migrations
                     b.HasIndex("Email")
                         .IsUnique();
 
-                    b.ToTable("Users");
+                    b.ToTable("Users", t =>
+                        {
+                            t.HasCheckConstraint("CK_Users_AdminMustBeDM", "NOT \"IsAdmin\" OR \"Role\" = 'DM'");
+                        });
                 });
 
             modelBuilder.Entity("DnDCampaignManager.Api.Models.AI.AIConversation", b =>
                 {
+                    b.HasOne("DnDCampaignManager.Api.Models.Campaign", "Campaign")
+                        .WithMany()
+                        .HasForeignKey("CampaignId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.HasOne("DnDCampingManager.Api.Models.User", "User")
                         .WithMany("AIConversations")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("Campaign");
 
                     b.Navigation("User");
                 });
@@ -552,6 +760,28 @@ namespace DnDCampaignManager.Api.Migrations
                     b.Navigation("Conversation");
                 });
 
+            modelBuilder.Entity("DnDCampaignManager.Api.Models.AI.CampaignKnowledgeChunk", b =>
+                {
+                    b.HasOne("DnDCampaignManager.Api.Models.AI.CampaignSessionNote", "SessionNote")
+                        .WithMany("Chunks")
+                        .HasForeignKey("SessionNoteId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SessionNote");
+                });
+
+            modelBuilder.Entity("DnDCampaignManager.Api.Models.AI.CampaignSessionNote", b =>
+                {
+                    b.HasOne("DnDCampaignManager.Api.Models.Campaign", "Campaign")
+                        .WithMany()
+                        .HasForeignKey("CampaignId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Campaign");
+                });
+
             modelBuilder.Entity("DnDCampaignManager.Api.Models.Campaign", b =>
                 {
                     b.HasOne("DnDCampingManager.Api.Models.User", "Owner")
@@ -561,6 +791,17 @@ namespace DnDCampaignManager.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Owner");
+                });
+
+            modelBuilder.Entity("DnDCampaignManager.Api.Models.CampaignItem", b =>
+                {
+                    b.HasOne("DnDCampaignManager.Api.Models.Campaign", "Campaign")
+                        .WithMany()
+                        .HasForeignKey("CampaignId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Campaign");
                 });
 
             modelBuilder.Entity("DnDCampaignManager.Api.Models.CampaignPlayer", b =>
@@ -654,6 +895,27 @@ namespace DnDCampaignManager.Api.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("DnDCampaignManager.Api.Models.CharacterItem", b =>
+                {
+                    b.HasOne("DnDCampaignManager.Api.Models.Character", "Character")
+                        .WithMany()
+                        .HasForeignKey("CharacterId", "CampaignId")
+                        .HasPrincipalKey("Id", "CampaignId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("DnDCampaignManager.Api.Models.CampaignItem", "Item")
+                        .WithMany()
+                        .HasForeignKey("ItemId", "CampaignId")
+                        .HasPrincipalKey("Id", "CampaignId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Character");
+
+                    b.Navigation("Item");
+                });
+
             modelBuilder.Entity("DnDCampaignManager.Api.Models.CharacterRaceOption", b =>
                 {
                     b.HasOne("DnDCampaignManager.Api.Models.Campaign", "Campaign")
@@ -698,6 +960,11 @@ namespace DnDCampaignManager.Api.Migrations
             modelBuilder.Entity("DnDCampaignManager.Api.Models.AI.AIConversation", b =>
                 {
                     b.Navigation("Messages");
+                });
+
+            modelBuilder.Entity("DnDCampaignManager.Api.Models.AI.CampaignSessionNote", b =>
+                {
+                    b.Navigation("Chunks");
                 });
 
             modelBuilder.Entity("DnDCampaignManager.Api.Models.Campaign", b =>

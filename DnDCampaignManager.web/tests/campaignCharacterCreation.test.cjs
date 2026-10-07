@@ -65,3 +65,17 @@ test('a character in one campaign does not hide creation in another campaign', (
 test('unauthenticated users do not get a creation action', () => {
     assert.doesNotMatch(renderCampaign({ user: null }), /Add Character/);
 });
+test('a full campaign displays all six characters and hides character creation', () => {
+    const characters = Array.from({ length: 6 }, (_, i) => ({ id: i + 20, userId: i + 2, name: `Hero ${i + 1}` }));
+    const html = renderCampaign({ characters });
+    for (const character of characters) assert.ok(html.includes(character.name));
+    assert.doesNotMatch(html, /Add Character|Available character space/);
+    assert.match(html, /6 \/ 6.*Full/);
+});
+test('campaign cards reserve six spaces and retain existing characters above the new limit', () => {
+    const html = renderCampaign({ characters: [{ id: 20, userId: 2, name: 'Freya' }] });
+    assert.equal((html.match(/Available character space/g) ?? []).length, 5);
+    const legacy = renderCampaign({ characters: Array.from({ length: 7 }, (_, i) => ({ id: i + 20, userId: i + 2, name: `Hero ${i + 1}` })) });
+    assert.match(legacy, /Hero 7/);
+    assert.doesNotMatch(legacy, /Add Character/);
+});

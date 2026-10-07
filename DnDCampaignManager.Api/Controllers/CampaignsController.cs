@@ -104,6 +104,13 @@ namespace DnDCampaignManager.Api.Controllers
 
             var userId = int.Parse(userIdClaim.Value);
 
+            await using var transaction = _dnDxDbContext.Database.CurrentTransaction is null
+                ? await _dnDxDbContext.Database.BeginTransactionAsync() : null;
+            // Serialize campaign creation with DM demotion so an in-flight request cannot recreate deleted DM data.
+            var owner = await _dnDxDbContext.Users.FromSqlInterpolated(
+                $"SELECT * FROM \"Users\" WHERE \"Id\" = {userId} FOR UPDATE").SingleOrDefaultAsync();
+            if (owner?.Role != Roles.DM) return Forbid();
+
             var campaign = new Campaign
             {
                 Name = Create.Name,
@@ -113,6 +120,7 @@ namespace DnDCampaignManager.Api.Controllers
 
             _dnDxDbContext.Campaigns.Add(campaign);
             await _dnDxDbContext.SaveChangesAsync();
+            if (transaction is not null) await transaction.CommitAsync();
 
             return Ok(new CampaignResponseDto(
                 campaign.Id,

@@ -3,7 +3,15 @@ import { type GetCharacterResponse, type CharacterForm } from "../components/Cha
 import { toCharacterRequest } from "./characterRequest";
 
 // Campaign
-export const getCampaigns = () => api.get("/campaigns");
+export type CampaignSummary = {
+    id: number;
+    name: string;
+    description: string;
+    ownerId: number;
+    characters: { id: number; name: string; userId: number; class: string; race: string; level: number }[];
+    players: { id: number; email: string }[];
+};
+export const getCampaigns = () => api.get<CampaignSummary[]>("/campaigns");
 
 export const getCampaign = (id: number) =>  api.get(`/campaigns/${id}`);
 

@@ -1,6 +1,7 @@
 import FormCard from "../UI/FormCard";
 import Button from "../UI/Button";
 import ErrorPanel from "../UI/ErrorPanel";
+import CharacterInventory from "./CharacterInventory";
 import { abilityModUtil, formatModUtil } from "../../Utils/dnd";
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -156,6 +157,7 @@ type Props = {
     error?: string | null;
 
     initialOptions?: CharacterOptionsPayload | null;
+    characterId?: number;
 };
 
 const SAVING_THROW_ROWS = [
@@ -252,7 +254,8 @@ export default function CharacterSheetForm({
     submitLabel,
     submitting,
     error,
-    initialOptions
+    initialOptions,
+    characterId
 }: Props) {
     const sectionClass =
         "bg-stone-50 border border-stone-300 rounded-xl p-4";
@@ -356,6 +359,7 @@ export default function CharacterSheetForm({
     const [newBackgroundName, setNewBackgroundName] = useState("");
 
     const [isReadView, setIsReadView] = useState(false);
+    const [activeTab, setActiveTab] = useState<"character" | "inventory">("character");
 
     // -------------------- Loaders --------------------------------------
     async function loadClassOptions(campaignId: number) {
@@ -522,17 +526,7 @@ export default function CharacterSheetForm({
 
     // -------------------- EDIT VIEW --------------------
     const EditView = (
-        <FormCard
-            title={title}
-            subtitle={subtitle}
-            topRight={
-                <Button type="button" variant="subtle" onClick={() => setIsReadView(true)}>
-                    Read View
-                </Button>
-            }
-        >
-            {error && <ErrorPanel message={error} />}
-
+        <>
             <form onSubmit={onSubmit} className="space-y-6">
                 {/* Identity */}
                 <section className={sectionClass}>
@@ -1362,22 +1356,12 @@ export default function CharacterSheetForm({
                     </Button>
                 </div>
             </form>
-        </FormCard>
+        </>
     );
 
     // -------------------- READ VIEW --------------------
     const ReadView = (
-        <FormCard
-            title={title}
-            subtitle={subtitle}
-            topRight={
-                <Button type="button" variant="subtle" onClick={() => setIsReadView(false)}>
-                    Edit View
-                </Button>
-            }
-        >
-            {error && <ErrorPanel message={error} />}
-
+        <>
             <section className="rounded-2xl border border-stone-200 bg-gradient-to-b from-amber-50 to-stone-50 p-5 shadow-sm">
                 {/* Header */}
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -1607,8 +1591,46 @@ export default function CharacterSheetForm({
                     </div>
                 </div>
             </section>
-        </FormCard>
+        </>
     );
 
-    return isReadView ? ReadView : EditView;
+    return <FormCard title={title} subtitle={subtitle}>
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-stone-300 pb-3">
+            {!isReadView && characterId ? <div role="tablist" aria-label="Character sheet sections" className="flex gap-2">
+                {(["character", "inventory"] as const).map(tab => <Button
+                    key={tab}
+                    id={`sheet-tab-${tab}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === tab}
+                    aria-controls={`sheet-panel-${tab}`}
+                    tabIndex={activeTab === tab ? 0 : -1}
+                    variant={activeTab === tab ? "primary" : "secondary"}
+                    onClick={() => setActiveTab(tab)}
+                    onKeyDown={event => {
+                        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                        event.preventDefault();
+                        const next = event.key === "Home" ? "character" : event.key === "End" ? "inventory" :
+                            tab === "character" ? "inventory" : "character";
+                        setActiveTab(next);
+                        event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`#sheet-tab-${next}`)?.focus();
+                    }}
+                >{tab === "character" ? "Character" : "Inventory"}</Button>)}
+            </div> : <span className="text-sm font-semibold text-stone-600">{isReadView ? "Character & inventory" : "Character"}</span>}
+            <button type="button" onClick={() => setIsReadView(current => !current)}
+                className="ml-auto rounded-lg border border-sky-700 bg-sky-700 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-800 focus:outline-none focus:ring-2 focus:ring-sky-600 focus:ring-offset-2">
+                {isReadView ? "Edit View" : "Read View"}
+            </button>
+        </div>
+        {error && <ErrorPanel message={error} />}
+        {isReadView ? ReadView : <div id="sheet-panel-character" role={characterId ? "tabpanel" : undefined}
+            aria-labelledby={characterId ? "sheet-tab-character" : undefined} hidden={activeTab !== "character"}>
+            {EditView}
+        </div>}
+        {characterId && <div id="sheet-panel-inventory" role={isReadView ? undefined : "tabpanel"}
+            aria-labelledby={isReadView ? undefined : "sheet-tab-inventory"}
+            hidden={!isReadView && activeTab !== "inventory"} className={isReadView ? "mt-6" : undefined}>
+            <CharacterInventory campaignId={form.campaignId} characterId={characterId} readOnly={isReadView} />
+        </div>}
+    </FormCard>;
 }

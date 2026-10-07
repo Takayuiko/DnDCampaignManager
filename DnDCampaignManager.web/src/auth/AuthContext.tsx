@@ -7,6 +7,7 @@ type User = {
     id: number;
     email: string;
     role: "DM" | "Player";
+    isAdmin: boolean;
 };
 
 type AuthContextType = {

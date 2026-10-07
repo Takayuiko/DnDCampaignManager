@@ -9,6 +9,7 @@ namespace DnDCampingManager.Api.Models
         public string Email { get; set; } = null!;
         public string PasswordHash { get; set; } = null!;
         public string Role { get; set; } = Roles.Player;
+        public bool IsAdmin { get; set; }
         public int TokenVersion { get; set; } = 0;
         public List<CampaignPlayer> Campaigns { get; set; } = new();
         public ICollection<Character> Characters { get; set; } = new List<Character>();

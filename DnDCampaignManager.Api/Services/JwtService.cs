@@ -21,13 +21,16 @@ public class JwtService : IJwtService
     {
         var active = _jwt.SigningKeys.First(); 
 
-        var claims = new[]
+        var claims = new List<Claim>
         {
             new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new Claim(ClaimTypes.Email, user.Email),
             new Claim(ClaimTypes.Role, user.Role),
+            new Claim("token_version", user.TokenVersion.ToString()),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
+        if (user.IsAdmin && user.Role == DnDCampaignManager.Api.Models.Roles.DM)
+            claims.Add(new Claim(ClaimTypes.Role, DnDCampaignManager.Api.Models.Roles.Admin));
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(active.Key))
         {

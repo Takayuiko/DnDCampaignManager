@@ -16,6 +16,9 @@ public class AIMessage
     public decimal EstimatedCostUsd { get; set; }
     public long DurationMs { get; set; }
     public string Status { get; set; } = "completed";
+    public string SourcesJson { get; set; } = "[]";
+    public int RetrievalInputTokens { get; set; }
+    public string? RetrievalWarning { get; set; }
 
     public AIConversation Conversation { get; set; } = null!;
 }

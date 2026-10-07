@@ -24,25 +24,28 @@ namespace DnDCampaignManager.Api.Controllers
         public async Task<IActionResult> CreateCharacter(int campaignId, [FromBody] CreateCharacterDto create)
         {
             var userId = GetUserId();
+            await using var transaction = _dnDxDbContext.Database.CurrentTransaction is null
+                ? await _dnDxDbContext.Database.BeginTransactionAsync() : null;
 
             var campaign = await _dnDxDbContext.Campaigns
+                .FromSqlInterpolated($"SELECT * FROM \"Campaigns\" WHERE \"Id\" = {campaignId} FOR UPDATE")
                 .Include(c => c.Players)
-                .Include(x => x.Characters)
                 .SingleOrDefaultAsync(c => c.Id == campaignId);
 
             if (campaign == null)
                 return NotFound("Campaign not found");
-
-            if (campaign.Characters.Any(x => x.UserId == userId))
-            {
-                return BadRequest("You already have a character in this campaign.");
-            }
 
             var isOwner = campaign.OwnerId == userId;
             var isPlayer = campaign.Players.Any(p => p.UserId == userId);
 
             if (!isOwner && !isPlayer)
                 return Forbid();
+
+            if (await _dnDxDbContext.Characters.AnyAsync(x => x.CampaignId == campaignId && x.UserId == userId))
+                return BadRequest("You already have a character in this campaign.");
+            // The campaign lock serializes simultaneous creation requests at the capacity boundary.
+            if (await _dnDxDbContext.Characters.CountAsync(x => x.CampaignId == campaignId) >= 6)
+                return Conflict("This campaign already has the maximum of 6 characters.");
 
             var character = new Character
             {
@@ -129,6 +132,7 @@ namespace DnDCampaignManager.Api.Controllers
 
             _dnDxDbContext.Characters.Add(character);
             await _dnDxDbContext.SaveChangesAsync();
+            if (transaction is not null) await transaction.CommitAsync();
 
             return Ok(new CharacterResponseDto
             {
@@ -193,7 +197,7 @@ namespace DnDCampaignManager.Api.Controllers
             if (character == null)
                 return NotFound();
 
-            var canEdit = (isDM && character.Campaign.OwnerId == userId) || (!isDM && character.UserId == userId);
+            var canEdit = (isDM && character.Campaign.OwnerId == userId) || character.UserId == userId;
             
             if (!canEdit)
                 return Forbid();
@@ -326,7 +330,7 @@ namespace DnDCampaignManager.Api.Controllers
             if (character == null)
                 return NotFound();
 
-            var canView = (isDM && character.Campaign.OwnerId == userId) || (!isDM && character.UserId == userId) || (isDM && character.UserId == userId);
+            var canView = (isDM && character.Campaign.OwnerId == userId) || character.UserId == userId;
 
             if (!canView)
                 return Forbid();
