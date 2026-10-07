@@ -56,6 +56,24 @@ foreach (var noteRequest in new[]
 }
 Console.WriteLine("PASS: MVC session-note validation accepts valid input and rejects missing fields, invalid session number and oversized notes");
 
+foreach (var (input, valid) in new (object, bool)[]
+{
+    (new SaveItemRequest("Torch", "Gear", "", null, 0.01m), true),
+    (new SaveItemRequest(" ", "Gear", "", null, null), false),
+    (new SaveItemRequest("Torch", "", "", -1, -1), false),
+    (new SaveItemRequest(new string('x', 121), "Gear", "", null, null), false),
+    (new AssignItemRequest(1, int.MaxValue, ""), true),
+    (new AssignItemRequest(0, 0, ""), false),
+    (new AssignItemRequest(1, 1, new string('x', 2001)), false)
+})
+{
+    var context = new ActionContext(new DefaultHttpContext { RequestServices = provider },
+        new RouteData(), new ActionDescriptor(), new ModelStateDictionary());
+    validator.Validate(context, null, "", input);
+    if (context.ModelState.IsValid != valid) throw new Exception("Item MVC validation failed.");
+}
+Console.WriteLine("PASS: MVC item validation enforces names, lengths, nonnegative values and positive quantities");
+
 var apiDirectory = Path.GetFullPath(args[0]);
 var configuration = new ConfigurationBuilder()
     .SetBasePath(apiDirectory)
@@ -120,6 +138,135 @@ Check(await characters.CreateCharacter(second.Id, request) is OkObjectResult, "S
 characters.ControllerContext = Context(other);
 Check(await characters.CreateCharacter(first.Id, request) is OkObjectResult, "One campaign supports multiple players' characters");
 var editedCharacter = await db.Characters.SingleAsync(c => c.CampaignId == first.Id && c.UserId == player.Id);
+var itemService = new ItemService(db);
+async Task<bool> ItemRejected(Func<Task> action, int status)
+{
+    try { await action(); return false; }
+    catch (ItemException ex) { return ex.Status == status; }
+}
+var itemRequest = new SaveItemRequest("  Moonstone  ", "Treasure", "A pale gem.", 0.1m, 50m);
+var moonstone = await itemService.SaveAsync(first.Id, null, dm.Id, true, itemRequest, CancellationToken.None);
+Check(moonstone.Name == "Moonstone", "DM creates a campaign item with normalized name");
+Check(await ItemRejected(() => itemService.SaveAsync(first.Id, null, dm.Id, true,
+    itemRequest with { Name = "moonSTONE" }, CancellationToken.None), 409), "Duplicate item names are rejected");
+Check(await ItemRejected(() => itemService.SaveAsync(first.Id, null, player.Id, false, itemRequest, CancellationToken.None), 403),
+    "Player cannot create catalog items");
+Check(await ItemRejected(() => itemService.SaveAsync(first.Id, moonstone.Id, other.Id, true, itemRequest, CancellationToken.None), 403),
+    "Another DM cannot edit the campaign catalog");
+var assignment = await itemService.AssignAsync(first.Id, editedCharacter.Id, dm.Id, true,
+    new AssignItemRequest(moonstone.Id, 3, "Found in the ruins."), CancellationToken.None);
+await itemService.AssignAsync(first.Id, editedCharacter.Id, dm.Id, true,
+    new AssignItemRequest(moonstone.Id, 1, "A separate gift."), CancellationToken.None);
+Check(assignment.Id > 0 && (await itemService.InventoryAsync(first.Id, editedCharacter.Id, player.Id, false, CancellationToken.None)).Items.Count == 2,
+    "Assignments persist quantities and separate copies; player reads own inventory");
+Check(await ItemRejected(() => itemService.InventoryAsync(first.Id, editedCharacter.Id, other.Id, false, CancellationToken.None), 403),
+    "Other players cannot read a character inventory");
+Check(await ItemRejected(() => itemService.AssignAsync(first.Id, editedCharacter.Id, player.Id, false,
+    new AssignItemRequest(moonstone.Id, 1, ""), CancellationToken.None), 403), "Player cannot assign items");
+var secondCharacter = await db.Characters.SingleAsync(c => c.CampaignId == second.Id && c.UserId == player.Id);
+Check(await ItemRejected(() => itemService.AssignAsync(second.Id, secondCharacter.Id, dm.Id, true,
+    new AssignItemRequest(moonstone.Id, 1, ""), CancellationToken.None), 404), "Cross-campaign item assignment is rejected");
+Check(await ItemRejected(() => itemService.AssignAsync(first.Id, secondCharacter.Id, dm.Id, true,
+    new AssignItemRequest(moonstone.Id, 1, ""), CancellationToken.None), 404), "Cross-campaign character assignment is rejected");
+Check(await ItemRejected(() => itemService.DeleteAsync(first.Id, moonstone.Id, dm.Id, true, CancellationToken.None), 409),
+    "Assigned catalog items cannot be deleted");
+await itemService.SaveAsync(first.Id, moonstone.Id, dm.Id, true, itemRequest with { Description = "Updated gem." }, CancellationToken.None);
+Check((await itemService.InventoryAsync(first.Id, editedCharacter.Id, dm.Id, true, CancellationToken.None)).Items.All(x => x.Item.Description == "Updated gem."),
+    "Catalog edits appear in assigned inventories");
+var imported = await itemService.ImportAsync(first.Id, dm.Id, true, CancellationToken.None);
+Check(imported == new ImportItemsResult(74, 0) &&
+    await itemService.ImportAsync(first.Id, dm.Id, true, CancellationToken.None) == new ImportItemsResult(0, 0),
+    "SRD starter import is repeatable without duplicating items");
+var torch = await db.CampaignItems.SingleAsync(x => x.CampaignId == first.Id && x.Name == "Torch");
+var dart = await db.CampaignItems.SingleAsync(x => x.CampaignId == first.Id && x.Name == "Dart");
+var plate = await db.CampaignItems.SingleAsync(x => x.CampaignId == first.Id && x.Name == "Plate");
+var bell = await db.CampaignItems.SingleAsync(x => x.CampaignId == first.Id && x.Name == "Bell");
+Check(torch.CostGp == 0.01m && torch.WeightLb == 1 && dart.CostGp == 0.05m && dart.WeightLb == 0.25m &&
+    plate.CostGp == 1500 && plate.WeightLb == 65 && bell.WeightLb == 0,
+    "SRD imports preserve copper prices, fractional weights, armor values and negligible weight");
+torch.WeightLb = null;
+torch.CostGp = 7;
+torch.Description = "DM's custom torch.";
+moonstone.WeightLb = null;
+moonstone.CostGp = null;
+var customSling = await itemService.SaveAsync(second.Id, null, dm.Id, true,
+    new SaveItemRequest("Sling", "Homebrew", "Custom sling.", null, null), CancellationToken.None);
+await db.SaveChangesAsync();
+Check(await itemService.ImportAsync(first.Id, dm.Id, true, CancellationToken.None) == new ImportItemsResult(0, 1) &&
+    torch.WeightLb == 1 && torch.CostGp == 7 && torch.Description == "DM's custom torch." && moonstone.WeightLb == null,
+    "Reimport fills only missing SRD values and preserves DM values and custom items");
+await itemService.ImportAsync(second.Id, dm.Id, true, CancellationToken.None);
+Check(customSling.CostGp == null && customSling.WeightLb == null && customSling.Category == "Homebrew",
+    "Reimport does not backfill custom items with matching starter names");
+Check(await itemService.ImportAsync(first.Id, dm.Id, true, CancellationToken.None) == new ImportItemsResult(0, 0),
+    "Reimport after backfill is idempotent");
+var disposable = await itemService.SaveAsync(second.Id, null, dm.Id, true,
+    itemRequest with { Name = "Disposable" }, CancellationToken.None);
+await itemService.DeleteAsync(second.Id, disposable.Id, dm.Id, true, CancellationToken.None);
+Check(!await db.CampaignItems.AnyAsync(x => x.Id == disposable.Id), "DM deletes an unassigned item");
+Check(!(await itemService.ListAsync(first.Id, player.Id, false, CancellationToken.None)).CanManage,
+    "Player catalog access exposes no management permission");
+Check(await ItemRejected(() => itemService.ListAsync(second.Id, other.Id, false, CancellationToken.None), 403),
+    "Nonmembers cannot read another campaign's catalog");
+var cleanupCampaign = new Campaign { Name = "Inventory cleanup", Description = "Temporary", OwnerId = dm.Id };
+db.Campaigns.Add(cleanupCampaign);
+await db.SaveChangesAsync();
+var cleanupCharacter = new Character { CampaignId = cleanupCampaign.Id, UserId = player.Id,
+    Name = "Cleanup", Class = "Fighter", Race = "Human", Background = "Soldier", Alignment = "Neutral" };
+db.Characters.Add(cleanupCharacter);
+await db.SaveChangesAsync();
+var cleanupItem = await itemService.SaveAsync(cleanupCampaign.Id, null, dm.Id, true, itemRequest, CancellationToken.None);
+await itemService.AssignAsync(cleanupCampaign.Id, cleanupCharacter.Id, dm.Id, true,
+    new AssignItemRequest(cleanupItem.Id, 1, ""), CancellationToken.None);
+await db.Campaigns.Where(x => x.Id == cleanupCampaign.Id).ExecuteDeleteAsync();
+Check(!await db.CharacterItems.AnyAsync(x => x.CampaignId == cleanupCampaign.Id) &&
+    !await db.CampaignItems.AnyAsync(x => x.CampaignId == cleanupCampaign.Id),
+    "Campaign deletion cascades catalog and inventory without foreign-key errors");
+await itemService.AssignAsync(second.Id, secondCharacter.Id, dm.Id, true,
+    new AssignItemRequest(customSling.Id, 2, "Keep this inventory."), CancellationToken.None);
+var deletePreview = await itemService.DeleteAllPreviewAsync(first.Id, dm.Id, true, CancellationToken.None);
+Check(deletePreview.ItemCount > 0 && deletePreview.InventoryEntryCount == 2,
+    "Delete-all preview counts catalog items and every character inventory entry");
+Check(await ItemRejected(() => itemService.DeleteAllPreviewAsync(first.Id, player.Id, false, CancellationToken.None), 403) &&
+    await ItemRejected(() => itemService.DeleteAllAsync(first.Id, other.Id, true,
+        new DeleteAllItemsRequest(deletePreview.ItemCount, deletePreview.InventoryEntryCount), CancellationToken.None), 403),
+    "Players and unrelated DMs cannot review or execute bulk item deletion");
+await itemService.SaveAsync(first.Id, null, dm.Id, true, itemRequest with { Name = "New item after preview" }, CancellationToken.None);
+Check(await ItemRejected(() => itemService.DeleteAllAsync(first.Id, dm.Id, true,
+    new DeleteAllItemsRequest(deletePreview.ItemCount, deletePreview.InventoryEntryCount), CancellationToken.None), 409) &&
+    await db.CharacterItems.CountAsync(x => x.CampaignId == first.Id) == 2,
+    "Stale bulk-deletion confirmation leaves all inventory entries intact");
+deletePreview = await itemService.DeleteAllPreviewAsync(first.Id, dm.Id, true, CancellationToken.None);
+var deletedItems = await itemService.DeleteAllAsync(first.Id, dm.Id, true,
+    new DeleteAllItemsRequest(deletePreview.ItemCount, deletePreview.InventoryEntryCount), CancellationToken.None);
+Check(deletedItems == deletePreview && !await db.CampaignItems.AnyAsync(x => x.CampaignId == first.Id) &&
+    !await db.CharacterItems.AnyAsync(x => x.CampaignId == first.Id) &&
+    await db.CampaignItems.AnyAsync(x => x.CampaignId == second.Id) &&
+    await db.CharacterItems.AnyAsync(x => x.CampaignId == second.Id),
+    "Confirmed bulk deletion clears catalog and inventories only in the selected campaign");
+
+var capacityCampaign = new Campaign { Name = "Capacity check", Description = "Temporary", OwnerId = dm.Id };
+db.Campaigns.Add(capacityCampaign);
+var capacityPlayers = Enumerable.Range(0, 7).Select(i => new User {
+    Email = $"capacity-{i}-{suffix}@example.test", Role = Roles.Player, PasswordHash = "unused-test-fixture"
+}).ToArray();
+db.Users.AddRange(capacityPlayers);
+await db.SaveChangesAsync();
+db.CampaignPlayer.AddRange(capacityPlayers.Select(p => new CampaignPlayer { CampaignId = capacityCampaign.Id, UserId = p.Id }));
+await db.SaveChangesAsync();
+for (var i = 0; i < 6; i++)
+{
+    characters.ControllerContext = Context(capacityPlayers[i]);
+    Check(await characters.CreateCharacter(capacityCampaign.Id, request) is OkObjectResult,
+        $"Campaign accepts character {i + 1} within its six-character limit");
+}
+characters.ControllerContext = Context(capacityPlayers[6]);
+Check(await characters.CreateCharacter(capacityCampaign.Id, request) is ConflictObjectResult &&
+    await db.Characters.CountAsync(x => x.CampaignId == capacityCampaign.Id) == 6,
+    "Direct API requests cannot create a seventh character");
+characters.ControllerContext = Context(dm);
+Check(await characters.CreateCharacter(capacityCampaign.Id, request) is ConflictObjectResult,
+    "The six-character limit also applies to the campaign owner");
 var hpUpdate = JsonSerializer.Deserialize<UpdateCharacterDto>("""
 {"Name":"Freya","Class":"Fighter","Race":"Human","Level":1,"Background":"Soldier","Alignment":"Neutral","Strength":10,"Dexterity":10,"Constitution":10,"Intelligence":10,"Wisdom":10,"Charisma":10,"ProficiencyBonus":2,"HitPointMax":10,"HitPointCurrent":7,"Skills":[],"SavingThrows":{}}
 """)!;

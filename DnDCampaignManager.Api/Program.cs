@@ -111,6 +111,7 @@ builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<DnDCampaignManager.Api.Services.CurrentTokenValidator>();
 builder.Services.AddScoped<DnDCampaignManager.Api.Services.DungeonMasterManagementService>();
+builder.Services.AddScoped<DnDCampaignManager.Api.Services.ItemService>();
 
 // OpenAI Responses API
 var openAiApiKey = builder.Configuration["OpenAI:ApiKey"];
