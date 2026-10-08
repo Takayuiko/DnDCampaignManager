@@ -27,10 +27,20 @@ namespace DnDCampingManager.Api.Data
         public DbSet<CampaignSessionNote> CampaignSessionNotes => Set<CampaignSessionNote>();
         public DbSet<CampaignKnowledgeChunk> CampaignKnowledgeChunks => Set<CampaignKnowledgeChunk>();
         public DbSet<CampaignMap> CampaignMaps => Set<CampaignMap>();
+        public DbSet<CampaignNpc> CampaignNpcs => Set<CampaignNpc>();
         public DbSet<MapKnowledgeChunk> MapKnowledgeChunks => Set<MapKnowledgeChunk>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            modelBuilder.Entity<CampaignNpc>().HasOne(x => x.Campaign).WithMany()
+                .HasForeignKey(x => x.CampaignId).OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<CampaignNpc>().HasOne(x => x.Map).WithMany()
+                .HasForeignKey(x => x.MapId).OnDelete(DeleteBehavior.SetNull);
+            modelBuilder.Entity<CampaignNpc>().Property(x => x.Name).HasMaxLength(120);
+            modelBuilder.Entity<CampaignNpc>().Property(x => x.Description).HasMaxLength(4000);
+            modelBuilder.Entity<CampaignNpc>().Property(x => x.LocationName).HasMaxLength(120);
+            modelBuilder.Entity<CampaignNpc>().Property(x => x.Version).IsConcurrencyToken();
+            modelBuilder.Entity<CampaignNpc>().HasIndex(x => new { x.CampaignId, x.Name });
             modelBuilder.Entity<RefreshToken>().Property(x => x.TokenHash).HasMaxLength(64);
             modelBuilder.Entity<RefreshToken>().Property(x => x.ReplacedByTokenHash).HasMaxLength(64);
             modelBuilder.Entity<RefreshToken>().HasIndex(x => x.TokenHash).IsUnique();
