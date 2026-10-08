@@ -3,6 +3,7 @@ using System;
 using DnDCampingManager.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace DnDCampaignManager.Api.Migrations
 {
     [DbContext(typeof(DnDxDbContext))]
-    partial class DnDxDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261008081154_CampaignNpcs")]
+    partial class CampaignNpcs
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -394,12 +397,6 @@ namespace DnDCampaignManager.Api.Migrations
                         .IsRequired()
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)");
-
-                    b.Property<byte[]>("OriginalImage")
-                        .HasColumnType("bytea");
-
-                    b.Property<string>("OriginalImageContentType")
-                        .HasColumnType("text");
 
                     b.Property<Guid>("Version")
                         .IsConcurrencyToken()
